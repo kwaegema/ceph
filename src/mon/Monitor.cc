@@ -1527,8 +1527,7 @@ void Monitor::handle_command(MMonCommand *m)
       rs = "must supply options to be parsed in a single string";
       r = -EINVAL;
     }
-  } 
-  if (m->cmd[0] == "status") {
+  } else if (m->cmd[0] == "status") {
     if (!access_r) {
       r = -EACCES;
       rs = "access denied";
@@ -1546,8 +1545,7 @@ void Monitor::handle_command(MMonCommand *m)
     ss << "   mdsmap " << mdsmon()->mdsmap << "\n";
     rs = ss.str();
     r = 0;
-  }
-  if (m->cmd[0] == "report") {
+  } else if (m->cmd[0] == "report") {
     if (!access_r) {
       r = -EACCES;
       rs = "access denied";
@@ -1571,7 +1569,7 @@ void Monitor::handle_command(MMonCommand *m)
 
     string hs;
     get_health(hs, NULL, &jf);
-    
+
     monmon()->dump_info(&jf);
     osdmon()->dump_info(&jf);
     mdsmon()->dump_info(&jf);
@@ -1590,8 +1588,7 @@ void Monitor::handle_command(MMonCommand *m)
     rdata.append(ss2.str());
     rs = string();
     r = 0;
-  }
-  if (m->cmd[0] == "quorum_status") {
+  } else if (m->cmd[0] == "quorum_status") {
     if (!access_r) {
       r = -EACCES;
       rs = "access denied";
@@ -1607,8 +1604,7 @@ void Monitor::handle_command(MMonCommand *m)
     _quorum_status(ss);
     rs = ss.str();
     r = 0;
-  }
-  if (m->cmd[0] == "mon_status") {
+  } else if (m->cmd[0] == "mon_status") {
     if (!access_r) {
       r = -EACCES;
       rs = "access denied";
@@ -1618,8 +1614,7 @@ void Monitor::handle_command(MMonCommand *m)
     _mon_status(ss);
     rs = ss.str();
     r = 0;
-  }
-  if (m->cmd[0] == "health") {
+  } else if (m->cmd[0] == "health") {
     if (!access_r) {
       r = -EACCES;
       rs = "access denied";
@@ -1627,8 +1622,7 @@ void Monitor::handle_command(MMonCommand *m)
     }
     get_health(rs, (m->cmd.size() > 1) ? &rdata : NULL, NULL);
     r = 0;
-  }
-  if (m->cmd[0] == "heap") {
+  } else if (m->cmd[0] == "heap") {
     if (!access_all) {
       r = -EACCES;
       rs = "access denied";
@@ -1641,8 +1635,7 @@ void Monitor::handle_command(MMonCommand *m)
       ceph_heap_profiler_handle_command(m->cmd, ss);
       rs = ss.str();
     }
-  }
-  if (m->cmd[0] == "quorum") {
+  } else if (m->cmd[0] == "quorum") {
     if (!access_all) {
       r = -EACCES;
       rs = "access denied";
