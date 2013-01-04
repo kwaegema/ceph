@@ -5011,8 +5011,6 @@ void ReplicatedPG::handle_push(OpRequestRef op)
   bool complete = m->recovery_progress.data_complete &&
     m->recovery_progress.omap_complete;
   ObjectStore::Transaction *t = new ObjectStore::Transaction;
-  Context *onreadable = new ObjectStore::C_DeleteTransaction(t);
-  Context *onreadable_sync = 0;
   submit_push_data(m->recovery_info,
 		   first,
 		   m->data_included,
@@ -5025,6 +5023,32 @@ void ReplicatedPG::handle_push(OpRequestRef op)
     submit_push_complete(m->recovery_info,
 			 t);
 
+  struct ReplyDeleteTransaction : public Context {
+    ObjectStore::Transaction *t;
+    Message *m;
+    Messenger *messenger;
+    Connection *conn;
+    ReplyDeleteTransaction(
+      ObjectStore::Transaction *t,
+      Message *m,
+      Messenger *messenger,
+      Connection *conn
+      ) : t(t), m(m), messenger(messenger), conn(conn) {}
+    void finish(int) {
+      messenger->send_message(m, conn);
+    }
+    ~ReplyDeleteTransaction() {
+      delete t;
+    }
+  };
+
+  assert(entity_name_t::TYPE_OSD == m->get_connection()->peer_type);
+  MOSDSubOpReply *reply = new MOSDSubOpReply(
+    m, 0, get_osdmap()->get_epoch(), CEPH_OSD_FLAG_ACK);
+  Context *onreadable = new ReplyDeleteTransaction(
+    t, reply, osd->cluster_messenger,
+    m->get_connection());
+  Context *onreadable_sync = 0;
   int r = osd->store->
     queue_transaction(&osr, t,
 		      onreadable,
@@ -5035,10 +5059,6 @@ void ReplicatedPG::handle_push(OpRequestRef op)
 		      onreadable_sync);
   assert(r == 0);
 
-  MOSDSubOpReply *reply = new MOSDSubOpReply(
-    m, 0, get_osdmap()->get_epoch(), CEPH_OSD_FLAG_ACK);
-  assert(entity_name_t::TYPE_OSD == m->get_connection()->peer_type);
-  osd->cluster_messenger->send_message(reply, m->get_connection());
 }
 
 int ReplicatedPG::send_push(int peer,
