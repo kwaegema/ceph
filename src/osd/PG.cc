@@ -3210,6 +3210,43 @@ bool PG::_compare_scrub_objects(ScrubMap::object &auth,
   return ok;
 }
 
+
+
+map<int, ScrubMap *>::const_iterator PG::_select_auth_object(
+  const hobject_t &obj,
+  const map<int,ScrubMap*> &maps)
+{
+  map<int, ScrubMap *>::const_iterator auth = maps.end();
+  // Prefer present/larger
+  for (map<int, ScrubMap *>::const_iterator j = maps.begin();
+       j != maps.end();
+       ++j) {
+    if (!j->second->objects.count(obj)) {
+      continue;
+    }
+    if (auth == maps.end()) {
+      auth = j;
+      continue;
+    }
+    if (g_conf->osd_scrub_repair_profile == 0) {
+      // Default repair profile, just take the first map that has it
+      continue;
+    } else {
+      assert(g_conf->osd_scrub_repair_profile == 1);
+      // rbd repair profile, prefer the larger object
+      const ScrubMap::object &auth_obj =
+	auth->second->objects.find(obj)->second;
+      const ScrubMap::object &cand_obj =
+	j->second->objects.find(obj)->second;
+      if (cand_obj.size > auth_obj.size) {
+	auth = j;
+	continue;
+      }
+    }
+  }
+  return auth;
+}
+
 void PG::_compare_scrubmaps(const map<int,ScrubMap*> &maps,  
 			    map<hobject_t, set<int> > &missing,
 			    map<hobject_t, set<int> > &inconsistent,
@@ -3231,24 +3268,20 @@ void PG::_compare_scrubmaps(const map<int,ScrubMap*> &maps,
   for (set<hobject_t>::const_iterator k = master_set.begin();
        k != master_set.end();
        k++) {
-    map<int, ScrubMap *>::const_iterator auth = maps.end();
+    map<int, ScrubMap *>::const_iterator auth = _select_auth_object(*k, maps);
+    assert(auth != maps.end());
     set<int> cur_missing;
     set<int> cur_inconsistent;
     for (j = maps.begin(); j != maps.end(); j++) {
       if (j->second->objects.count(*k)) {
-	if (auth == maps.end()) {
-	  // Take first osd to have it as authoritative
-	  auth = j;
-	} else {
-	  // Compare 
-	  stringstream ss;
-	  if (!_compare_scrub_objects(auth->second->objects[*k],
-				      j->second->objects[*k],
-				      ss)) {
-	    cur_inconsistent.insert(j->first);
-	    errorstream << info.pgid << " osd." << acting[j->first]
-			<< ": soid " << *k << " " << ss.str() << std::endl;
-	  }
+	// Compare 
+	stringstream ss;
+	if (!_compare_scrub_objects(auth->second->objects[*k],
+	    j->second->objects[*k],
+	    ss)) {
+	  cur_inconsistent.insert(j->first);
+	  errorstream << info.pgid << " osd." << acting[j->first]
+		      << ": soid " << *k << " " << ss.str() << std::endl;
 	}
       } else {
 	cur_missing.insert(j->first);
