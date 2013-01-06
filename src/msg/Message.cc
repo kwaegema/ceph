@@ -164,8 +164,16 @@ void Message::encode(uint64_t features, bool datacrc)
       header.compat_version = header.version;
   }
   calc_front_crc();
+
+  // update envelope
+  header.front_len = get_payload().length();
+  header.middle_len = get_middle().length();
+  header.data_len = get_data().length();
+  footer.flags = CEPH_MSG_FOOTER_COMPLETE;
+
   if (datacrc) {
     calc_data_crc();
+    calc_header_crc();
 
 #ifdef ENCODE_DUMP
     bufferlist bl;
@@ -197,9 +205,10 @@ void Message::encode(uint64_t features, bool datacrc)
     }
 #endif
 
-  }
-  else
+  } else {
+    calc_header_crc();
     footer.flags = (unsigned)footer.flags | CEPH_MSG_FOOTER_NOCRC;
+  }
 }
 
 void Message::dump(Formatter *f) const
