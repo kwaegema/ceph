@@ -383,6 +383,8 @@ Connection *SimpleMessenger::get_connection(const entity_inst_t& dest)
 void SimpleMessenger::submit_message(Message *m, Connection *con,
 				     const entity_addr_t& dest_addr, int dest_type, bool lazy)
 {
+  m->cct = cct;
+
   // existing connection?
   if (con) {
     Pipe *pipe = NULL;

@@ -303,20 +303,25 @@ protected:
   // currently throttled.
   uint64_t dispatch_throttle_size;
 
+public:
+  CephContext *cct;
+
   friend class Messenger;
 
 public:
   Message()
     : connection(NULL),
       throttler(NULL),
-      dispatch_throttle_size(0) {
+      dispatch_throttle_size(0),
+      cct(NULL) {
     memset(&header, 0, sizeof(header));
     memset(&footer, 0, sizeof(footer));
   };
   Message(int t, int version=1, int compat_version=0)
     : connection(NULL),
       throttler(NULL),
-      dispatch_throttle_size(0) {
+      dispatch_throttle_size(0),
+      cct(NULL) {
     memset(&header, 0, sizeof(header));
     header.type = t;
     header.version = version;
@@ -326,7 +331,18 @@ public:
     memset(&footer, 0, sizeof(footer));
   }
 
+  void put() {
+    if (cct) {
+      int n = nref.read();      
+      lgeneric_subdout(cct, ms, 10) << "Message(" << this << ") put " << n << " -> " << (n-1) << dendl;
+    }
+    RefCountedObject::put();
+  }
   Message *get() {
+    if (cct) {
+      int n = nref.read();      
+      lgeneric_subdout(cct, ms, 10) << "Message(" << this << ") get " << n << " -> " << (n+1) << dendl;
+    }
     return (Message *)RefCountedObject::get();
   }
 
