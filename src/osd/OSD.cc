@@ -147,7 +147,7 @@ static CompatSet get_osd_compat_set() {
 		   ceph_osd_feature_incompat);
 }
 
-OSDService::OSDService(OSD *osd) :
+OSDService::OSDService(OSDAbstract *osd) :
   osd(osd),
   whoami(osd->whoami), store(osd->store), clog(osd->clog),
   pg_recovery_stats(osd->pg_recovery_stats),
@@ -281,6 +281,77 @@ void OSDService::init()
 {
   reserver_finisher.start();
   watch_timer.init();
+}
+
+OSDAbstract::OSDAbstract(int id, Messenger *internal_messenger, Messenger *external_messenger, Messenger *hbclientm, MonClient *mc) :
+    Dispatcher(external_messenger->cct),
+  osd_lock("OSD::osd_lock"),
+  // tick_timer(external_messenger->cct, osd_lock),
+  // authorize_handler_cluster_registry(new AuthAuthorizeHandlerRegistry(external_messenger->cct,
+  // 								      cct->_conf->auth_supported.length() ?
+  // 								      cct->_conf->auth_supported :
+  // 								      cct->_conf->auth_cluster_required)),
+  // authorize_handler_service_registry(new AuthAuthorizeHandlerRegistry(external_messenger->cct,
+  // 								      cct->_conf->auth_supported.length() ?
+  // 								      cct->_conf->auth_supported :
+  // 								      cct->_conf->auth_service_required)),
+  cluster_messenger(internal_messenger),
+  client_messenger(external_messenger),
+  monc(mc),
+  logger(NULL),
+  store(NULL),
+  clog(external_messenger->cct, client_messenger, &mc->monmap, LogClient::NO_FLAGS),
+  whoami(id),
+  // dev_path(dev), journal_path(jdev),
+  // dispatch_running(false),
+  // asok_hook(NULL),
+  // osd_compat(get_osd_compat_set()),
+  state(STATE_INITIALIZING), 
+  // boot_epoch(0), up_epoch(0), bind_epoch(0),
+  op_tp(external_messenger->cct, "OSD::op_tp", g_conf->osd_op_threads, "osd_op_threads"),
+  recovery_tp(external_messenger->cct, "OSD::recovery_tp", g_conf->osd_recovery_threads, "osd_recovery_threads"),
+  disk_tp(external_messenger->cct, "OSD::disk_tp", g_conf->osd_disk_threads, "osd_disk_threads"),
+  command_tp(external_messenger->cct, "OSD::command_tp", 1),
+  // paused_recovery(false),
+  // heartbeat_lock("OSD::heartbeat_lock"),
+  // heartbeat_stop(false), heartbeat_need_update(true), heartbeat_epoch(0),
+  hbclient_messenger(hbclientm),
+  // hbserver_messenger(hbserverm),
+  // heartbeat_thread(this),
+  // heartbeat_dispatcher(this),
+  // stat_lock("OSD::stat_lock"),
+  // finished_lock("OSD::finished_lock"),
+  op_wq(this, g_conf->osd_op_thread_timeout, &op_tp),
+  peering_wq(this, g_conf->osd_op_thread_timeout, &op_tp, 200),
+  // map_lock("OSD::map_lock"),
+  // peer_map_epoch_lock("OSD::peer_map_epoch_lock"),
+  // debug_drop_pg_create_probability(g_conf->osd_debug_drop_pg_create_probability),
+  // debug_drop_pg_create_duration(g_conf->osd_debug_drop_pg_create_duration),
+  // debug_drop_pg_create_left(-1),
+  // outstanding_pg_stats(false),
+  // up_thru_wanted(0), up_thru_pending(0),
+  // pg_stat_queue_lock("OSD::pg_stat_queue_lock"),
+  // osd_stat_updated(false),
+  // pg_stat_tid(0), pg_stat_tid_flushed(0),
+  // command_wq(this, g_conf->osd_command_thread_timeout, &command_tp),
+  // recovery_ops_active(0),
+  recovery_wq(this, g_conf->osd_recovery_thread_timeout, &recovery_tp),
+  replay_queue_lock("OSD::replay_queue_lock"),
+  snap_trim_wq(this, g_conf->osd_snap_trim_thread_timeout, &disk_tp),
+  scrub_wq(this, g_conf->osd_scrub_thread_timeout, &disk_tp),
+  scrub_finalize_wq(this, g_conf->osd_scrub_finalize_thread_timeout, &op_tp),
+  rep_scrub_wq(this, g_conf->osd_scrub_thread_timeout, &disk_tp),
+  // remove_wq(store, g_conf->osd_remove_thread_timeout, &disk_tp),
+  // next_removal_seq(0),
+  service(this)
+{}
+
+OSDAbstract::~OSDAbstract()
+{
+  delete class_handler;
+  g_ceph_context->get_perfcounters_collection()->remove(logger);
+  delete logger;
+  delete store;
 }
 
 ObjectStore *OSD::create_object_store(const std::string &dev, const std::string &jdev)
@@ -765,8 +836,8 @@ int OSD::peek_journal_fsid(string path, uuid_d& fsid)
 OSD::OSD(int id, Messenger *internal_messenger, Messenger *external_messenger,
 	 Messenger *hbclientm, Messenger *hbserverm, MonClient *mc,
 	 const std::string &dev, const std::string &jdev) :
-  Dispatcher(external_messenger->cct),
-  osd_lock("OSD::osd_lock"),
+  OSDAbstract(id, internal_messenger, external_messenger, hbclientm, mc),
+  //  osd_lock("OSD::osd_lock"),
   tick_timer(external_messenger->cct, osd_lock),
   authorize_handler_cluster_registry(new AuthAuthorizeHandlerRegistry(external_messenger->cct,
 								      cct->_conf->auth_supported.length() ?
@@ -776,33 +847,34 @@ OSD::OSD(int id, Messenger *internal_messenger, Messenger *external_messenger,
 								      cct->_conf->auth_supported.length() ?
 								      cct->_conf->auth_supported :
 								      cct->_conf->auth_service_required)),
-  cluster_messenger(internal_messenger),
-  client_messenger(external_messenger),
-  monc(mc),
-  logger(NULL),
-  store(NULL),
-  clog(external_messenger->cct, client_messenger, &mc->monmap, LogClient::NO_FLAGS),
-  whoami(id),
+  // cluster_messenger(internal_messenger),
+  // client_messenger(external_messenger),
+  // monc(mc),
+  // logger(NULL),
+  // store(NULL),
+  // clog(external_messenger->cct, client_messenger, &mc->monmap, LogClient::NO_FLAGS),
+  // whoami(id),
   dev_path(dev), journal_path(jdev),
   dispatch_running(false),
   asok_hook(NULL),
   osd_compat(get_osd_compat_set()),
-  state(STATE_INITIALIZING), boot_epoch(0), up_epoch(0), bind_epoch(0),
-  op_tp(external_messenger->cct, "OSD::op_tp", g_conf->osd_op_threads, "osd_op_threads"),
-  recovery_tp(external_messenger->cct, "OSD::recovery_tp", g_conf->osd_recovery_threads, "osd_recovery_threads"),
-  disk_tp(external_messenger->cct, "OSD::disk_tp", g_conf->osd_disk_threads, "osd_disk_threads"),
-  command_tp(external_messenger->cct, "OSD::command_tp", 1),
+  // state(STATE_INITIALIZING), 
+  boot_epoch(0), up_epoch(0), bind_epoch(0),
+  // op_tp(external_messenger->cct, "OSD::op_tp", g_conf->osd_op_threads, "osd_op_threads"),
+  // recovery_tp(external_messenger->cct, "OSD::recovery_tp", g_conf->osd_recovery_threads, "osd_recovery_threads"),
+  // disk_tp(external_messenger->cct, "OSD::disk_tp", g_conf->osd_disk_threads, "osd_disk_threads"),
+  // command_tp(external_messenger->cct, "OSD::command_tp", 1),
   paused_recovery(false),
   heartbeat_lock("OSD::heartbeat_lock"),
   heartbeat_stop(false), heartbeat_need_update(true), heartbeat_epoch(0),
-  hbclient_messenger(hbclientm),
+  // hbclient_messenger(hbclientm),
   hbserver_messenger(hbserverm),
   heartbeat_thread(this),
   heartbeat_dispatcher(this),
   stat_lock("OSD::stat_lock"),
   finished_lock("OSD::finished_lock"),
-  op_wq(this, g_conf->osd_op_thread_timeout, &op_tp),
-  peering_wq(this, g_conf->osd_op_thread_timeout, &op_tp, 200),
+  // op_wq(this, g_conf->osd_op_thread_timeout, &op_tp),
+  // peering_wq(this, g_conf->osd_op_thread_timeout, &op_tp, 200),
   map_lock("OSD::map_lock"),
   peer_map_epoch_lock("OSD::peer_map_epoch_lock"),
   debug_drop_pg_create_probability(g_conf->osd_debug_drop_pg_create_probability),
@@ -815,15 +887,15 @@ OSD::OSD(int id, Messenger *internal_messenger, Messenger *external_messenger,
   pg_stat_tid(0), pg_stat_tid_flushed(0),
   command_wq(this, g_conf->osd_command_thread_timeout, &command_tp),
   recovery_ops_active(0),
-  recovery_wq(this, g_conf->osd_recovery_thread_timeout, &recovery_tp),
-  replay_queue_lock("OSD::replay_queue_lock"),
-  snap_trim_wq(this, g_conf->osd_snap_trim_thread_timeout, &disk_tp),
-  scrub_wq(this, g_conf->osd_scrub_thread_timeout, &disk_tp),
-  scrub_finalize_wq(this, g_conf->osd_scrub_finalize_thread_timeout, &op_tp),
-  rep_scrub_wq(this, g_conf->osd_scrub_thread_timeout, &disk_tp),
+  // recovery_wq(this, g_conf->osd_recovery_thread_timeout, &recovery_tp),
+  // replay_queue_lock("OSD::replay_queue_lock"),
+  // snap_trim_wq(this, g_conf->osd_snap_trim_thread_timeout, &disk_tp),
+  // scrub_wq(this, g_conf->osd_scrub_thread_timeout, &disk_tp),
+  // scrub_finalize_wq(this, g_conf->osd_scrub_finalize_thread_timeout, &op_tp),
+  // rep_scrub_wq(this, g_conf->osd_scrub_thread_timeout, &disk_tp),
   remove_wq(store, g_conf->osd_remove_thread_timeout, &disk_tp),
-  next_removal_seq(0),
-  service(this)
+  next_removal_seq(0)
+  // service(this)
 {
   monc->set_messenger(client_messenger);
 }
@@ -832,10 +904,6 @@ OSD::~OSD()
 {
   delete authorize_handler_cluster_registry;
   delete authorize_handler_service_registry;
-  delete class_handler;
-  g_ceph_context->get_perfcounters_collection()->remove(logger);
-  delete logger;
-  delete store;
 }
 
 void cls_initialize(ClassHandler *ch);
