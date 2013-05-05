@@ -722,6 +722,11 @@ unittest_osd_types_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
 unittest_osd_types_LDADD = libglobal.la libcommon.la $(PTHREAD_LIBS) -lm ${UNITTEST_LDADD} $(CRYPTO_LIBS) $(EXTRALIBS)
 check_PROGRAMS += unittest_osd_types
 
+unittest_replicated_pg_SOURCES = test/osd/TestReplicatedPG.cc perfglue/disabled_heap_profiler.cc objclass/class_api.cc
+unittest_replicated_pg_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
+unittest_replicated_pg_LDADD = libosd.a libglobal.la libcommon.la $(LIBOS_LDA) $(LIBGLOBAL_LDA) $(PTHREAD_LIBS) -lm ${UNITTEST_LDADD} $(CRYPTO_LIBS) $(EXTRALIBS)
+check_PROGRAMS += unittest_replicated_pg
+
 unittest_gather_SOURCES = test/gather.cc
 unittest_gather_LDADD = ${LIBGLOBAL_LDA} ${UNITTEST_LDADD}
 unittest_gather_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
