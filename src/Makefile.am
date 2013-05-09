@@ -1483,6 +1483,7 @@ libos_a_CXXFLAGS= ${AM_CXXFLAGS}
 noinst_LIBRARIES += libos.a
 
 libosd_a_SOURCES = \
+	osd/IPG.cc \
 	osd/PG.cc \
 	osd/ReplicatedPG.cc \
 	osd/Ager.cc \

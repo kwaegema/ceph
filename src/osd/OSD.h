@@ -17,7 +17,7 @@
 
 #include "boost/tuple/tuple.hpp"
 
-#include "PG.h"
+#include "IPG.h"
 
 #include "msg/Dispatcher.h"
 
@@ -177,15 +177,15 @@ public:
   PerfCounters *&logger;
   MonClient   *&monc;
   ThreadPool::WorkQueueVal<pair<PGRef, OpRequestRef>, PGRef> &op_wq;
-  ThreadPool::BatchWorkQueue<PG> &peering_wq;
-  ThreadPool::WorkQueue<PG> &recovery_wq;
-  ThreadPool::WorkQueue<PG> &snap_trim_wq;
-  ThreadPool::WorkQueue<PG> &scrub_wq;
-  ThreadPool::WorkQueue<PG> &scrub_finalize_wq;
+  ThreadPool::BatchWorkQueue<IPG> &peering_wq;
+  ThreadPool::WorkQueue<IPG> &recovery_wq;
+  ThreadPool::WorkQueue<IPG> &snap_trim_wq;
+  ThreadPool::WorkQueue<IPG> &scrub_wq;
+  ThreadPool::WorkQueue<IPG> &scrub_finalize_wq;
   ThreadPool::WorkQueue<MOSDRepScrub> &rep_scrub_wq;
   ClassHandler  *&class_handler;
 
-  void dequeue_pg(PG *pg, list<OpRequestRef> *dequeued);
+  void dequeue_pg(IPG *pg, list<OpRequestRef> *dequeued);
 
   // -- superblock --
   Mutex publish_lock, pre_publish_lock;
@@ -290,7 +290,7 @@ public:
 
   void reply_op_error(OpRequestRef op, int err);
   void reply_op_error(OpRequestRef op, int err, eversion_t v);
-  void handle_misdirected_op(PG *pg, OpRequestRef op);
+  void handle_misdirected_op(IPG *pg, OpRequestRef op);
 
   // -- Watch --
   Mutex watch_lock;
@@ -332,12 +332,12 @@ public:
   }
   void send_pg_temp();
 
-  void queue_for_peering(PG *pg);
-  bool queue_for_recovery(PG *pg);
-  bool queue_for_snap_trim(PG *pg) {
+  void queue_for_peering(IPG *pg);
+  bool queue_for_recovery(IPG *pg);
+  bool queue_for_snap_trim(IPG *pg) {
     return snap_trim_wq.queue(pg);
   }
-  bool queue_for_scrub(PG *pg) {
+  bool queue_for_scrub(IPG *pg) {
     return scrub_wq.queue(pg);
   }
 
@@ -378,8 +378,8 @@ public:
 
   void need_heartbeat_peer_update();
 
-  void pg_stat_queue_enqueue(PG *pg);
-  void pg_stat_queue_dequeue(PG *pg);
+  void pg_stat_queue_enqueue(IPG *pg);
+  void pg_stat_queue_dequeue(IPG *pg);
 
   void init();
   void shutdown();
@@ -441,8 +441,8 @@ public:
 #ifdef PG_DEBUG_REFS
   Mutex pgid_lock;
   map<pg_t, int> pgid_tracker;
-  map<pg_t, PG*> live_pgs;
-  void add_pgid(pg_t pgid, PG *pg) {
+  map<pg_t, IPG*> live_pgs;
+  void add_pgid(pg_t pgid, IPG *pg) {
     Mutex::Locker l(pgid_lock);
     if (!pgid_tracker.count(pgid)) {
       pgid_tracker[pgid] = 0;
@@ -450,7 +450,7 @@ public:
     }
     pgid_tracker[pgid]++;
   }
-  void remove_pgid(pg_t pgid, PG *pg) {
+  void remove_pgid(pg_t pgid, IPG *pg) {
     Mutex::Locker l(pgid_lock);
     assert(pgid_tracker.count(pgid));
     assert(pgid_tracker[pgid] > 0);
@@ -734,7 +734,7 @@ private:
   struct OpWQ: public ThreadPool::WorkQueueVal<pair<PGRef, OpRequestRef>,
 					       PGRef > {
     Mutex qlock;
-    map<PG*, list<OpRequestRef> > pg_for_processing;
+    map<IPG*, list<OpRequestRef> > pg_for_processing;
     OSD *osd;
     PrioritizedQueue<pair<PGRef, OpRequestRef>, entity_inst_t > pqueue;
     OpWQ(OSD *o, time_t ti, ThreadPool *tp)
@@ -756,13 +756,13 @@ private:
     PGRef _dequeue();
 
     struct Pred {
-      PG *pg;
-      Pred(PG *pg) : pg(pg) {}
+      IPG *pg;
+      Pred(IPG *pg) : pg(pg) {}
       bool operator()(const pair<PGRef, OpRequestRef> &op) {
 	return op.first == pg;
       }
     };
-    void dequeue(PG *pg, list<OpRequestRef> *dequeued = 0) {
+    void dequeue(IPG *pg, list<OpRequestRef> *dequeued = 0) {
       lock();
       if (!dequeued) {
 	pqueue.remove_by_filter(Pred(pg));
@@ -790,21 +790,21 @@ private:
     void _process(PGRef pg);
   } op_wq;
 
-  void enqueue_op(PG *pg, OpRequestRef op);
+  void enqueue_op(IPG *pg, OpRequestRef op);
   void dequeue_op(PGRef pg, OpRequestRef op);
 
   // -- peering queue --
-  struct PeeringWQ : public ThreadPool::BatchWorkQueue<PG> {
-    list<PG*> peering_queue;
+  struct PeeringWQ : public ThreadPool::BatchWorkQueue<IPG> {
+    list<IPG*> peering_queue;
     OSD *osd;
-    set<PG*> in_use;
+    set<IPG*> in_use;
     const size_t batch_size;
     PeeringWQ(OSD *o, time_t ti, ThreadPool *tp, size_t batch_size)
-      : ThreadPool::BatchWorkQueue<PG>(
+      : ThreadPool::BatchWorkQueue<IPG>(
 	"OSD::PeeringWQ", ti, ti*10, tp), osd(o), batch_size(batch_size) {}
 
-    void _dequeue(PG *pg) {
-      for (list<PG*>::iterator i = peering_queue.begin();
+    void _dequeue(IPG *pg) {
+      for (list<IPG*>::iterator i = peering_queue.begin();
 	   i != peering_queue.end();
 	   ) {
 	if (*i == pg) {
@@ -815,7 +815,7 @@ private:
 	}
       }
     }
-    bool _enqueue(PG *pg) {
+    bool _enqueue(IPG *pg) {
       pg->get("PeeringWQ");
       peering_queue.push_back(pg);
       return true;
@@ -823,9 +823,9 @@ private:
     bool _empty() {
       return peering_queue.empty();
     }
-    void _dequeue(list<PG*> *out) {
-      set<PG*> got;
-      for (list<PG*>::iterator i = peering_queue.begin();
+    void _dequeue(list<IPG*> *out) {
+      set<IPG*> got;
+      for (list<IPG*>::iterator i = peering_queue.begin();
 	   i != peering_queue.end() && out->size() < batch_size;
 	   ) {
 	if (in_use.count(*i)) {
@@ -839,17 +839,17 @@ private:
       in_use.insert(got.begin(), got.end());
     }
     void _process(
-      const list<PG *> &pgs,
+      const list<IPG *> &pgs,
       ThreadPool::TPHandle &handle) {
       osd->process_peering_events(pgs, handle);
-      for (list<PG *>::const_iterator i = pgs.begin();
+      for (list<IPG *>::const_iterator i = pgs.begin();
 	   i != pgs.end();
 	   ++i) {
 	(*i)->put("PeeringWQ");
       }
     }
-    void _process_finish(const list<PG *> &pgs) {
-      for (list<PG*>::const_iterator i = pgs.begin();
+    void _process_finish(const list<IPG *> &pgs) {
+      for (list<IPG*>::const_iterator i = pgs.begin();
 	   i != pgs.end();
 	   ++i) {
 	in_use.erase(*i);
@@ -861,7 +861,7 @@ private:
   } peering_wq;
 
   void process_peering_events(
-    const list<PG*> &pg,
+    const list<IPG*> &pg,
     ThreadPool::TPHandle &handle);
 
   friend class PG;
@@ -897,10 +897,10 @@ private:
   void note_up_osd(int osd);
   
   void advance_pg(
-    epoch_t advance_to, PG *pg,
+    epoch_t advance_to, IPG *pg,
     ThreadPool::TPHandle &handle,
-    PG::RecoveryCtx *rctx,
-    set<boost::intrusive_ptr<PG> > *split_pgs
+    IPG::RecoveryCtx *rctx,
+    set<boost::intrusive_ptr<IPG> > *split_pgs
   );
   void advance_map(ObjectStore::Transaction& t, C_Contexts *tfin);
   void consume_map();
@@ -938,34 +938,34 @@ private:
 
 protected:
   // -- placement groups --
-  hash_map<pg_t, PG*> pg_map;
+  hash_map<pg_t, IPG*> pg_map;
   map<pg_t, list<OpRequestRef> > waiting_for_pg;
-  map<pg_t, list<PG::CephPeeringEvtRef> > peering_wait_for_split;
+  map<pg_t, list<IPG::CephPeeringEvtRef> > peering_wait_for_split;
   PGRecoveryStats pg_recovery_stats;
 
   PGPool _get_pool(int id, OSDMapRef createmap);
 
   bool  _have_pg(pg_t pgid);
-  PG   *_lookup_lock_pg_with_map_lock_held(pg_t pgid);
-  PG   *_lookup_lock_pg(pg_t pgid);
-  PG   *_lookup_pg(pg_t pgid);
-  PG   *_open_lock_pg(OSDMapRef createmap,
+  IPG   *_lookup_lock_pg_with_map_lock_held(pg_t pgid);
+  IPG   *_lookup_lock_pg(pg_t pgid);
+  IPG   *_lookup_pg(pg_t pgid);
+  IPG   *_open_lock_pg(OSDMapRef createmap,
 		      pg_t pg, bool no_lockdep_check=false,
 		      bool hold_map_lock=false);
-  PG   *_create_lock_pg(OSDMapRef createmap,
+  IPG   *_create_lock_pg(OSDMapRef createmap,
 			pg_t pgid, bool newly_created,
 			bool hold_map_lock, int role,
 			vector<int>& up, vector<int>& acting,
 			pg_history_t history,
 			pg_interval_map_t& pi,
 			ObjectStore::Transaction& t);
-  PG   *_lookup_qlock_pg(pg_t pgid);
+  IPG   *_lookup_qlock_pg(pg_t pgid);
 
-  PG* _make_pg(OSDMapRef createmap, pg_t pgid);
-  void add_newly_split_pg(PG *pg,
-			  PG::RecoveryCtx *rctx);
+  IPG* _make_pg(OSDMapRef createmap, pg_t pgid);
+  void add_newly_split_pg(IPG *pg,
+			  IPG::RecoveryCtx *rctx);
 
-  PG *get_or_create_pg(const pg_info_t& info,
+  IPG *get_or_create_pg(const pg_info_t& info,
                        pg_interval_map_t& pi,
                        epoch_t epoch, int from, int& pcreated,
                        bool primary);
@@ -1007,14 +1007,14 @@ protected:
   bool can_create_pg(pg_t pgid);
   void handle_pg_create(OpRequestRef op);
 
-  void do_split(PG *parent, set<pg_t>& children, ObjectStore::Transaction &t, C_Contexts *tfin);
-  void split_pg(PG *parent, map<pg_t,PG*>& children, ObjectStore::Transaction &t);
+  void do_split(IPG *parent, set<pg_t>& children, ObjectStore::Transaction &t, C_Contexts *tfin);
+  void split_pg(IPG *parent, map<pg_t,IPG*>& children, ObjectStore::Transaction &t);
   void split_pgs(
-    PG *parent,
-    const set<pg_t> &childpgids, set<boost::intrusive_ptr<PG> > *out_pgs,
+    IPG *parent,
+    const set<pg_t> &childpgids, set<boost::intrusive_ptr<IPG> > *out_pgs,
     OSDMapRef curmap,
     OSDMapRef nextmap,
-    PG::RecoveryCtx *rctx);
+    IPG::RecoveryCtx *rctx);
 
   // == monitor interaction ==
   utime_t last_mon_report;
@@ -1056,7 +1056,7 @@ protected:
   // -- pg stats --
   Mutex pg_stat_queue_lock;
   Cond pg_stat_queue_cond;
-  xlist<PG*> pg_stat_queue;
+  xlist<IPG*> pg_stat_queue;
   bool osd_stat_updated;
   uint64_t pg_stat_tid, pg_stat_tid_flushed;
 
@@ -1064,25 +1064,25 @@ protected:
   void handle_pg_stats_ack(class MPGStatsAck *ack);
   void flush_pg_stats();
 
-  void pg_stat_queue_enqueue(PG *pg) {
+  void pg_stat_queue_enqueue(IPG *pg) {
     pg_stat_queue_lock.Lock();
-    if (pg->is_primary() && !pg->stat_queue_item.is_on_list()) {
+    if (pg->is_primary() && !pg->get_stat_queue_item().is_on_list()) {
       pg->get("pg_stat_queue");
-      pg_stat_queue.push_back(&pg->stat_queue_item);
+      pg_stat_queue.push_back(&pg->get_stat_queue_item());
     }
     osd_stat_updated = true;
     pg_stat_queue_lock.Unlock();
   }
-  void pg_stat_queue_dequeue(PG *pg) {
+  void pg_stat_queue_dequeue(IPG *pg) {
     pg_stat_queue_lock.Lock();
-    if (pg->stat_queue_item.remove_myself())
+    if (pg->get_stat_queue_item().remove_myself())
       pg->put("pg_stat_queue");
     pg_stat_queue_lock.Unlock();
   }
   void clear_pg_stat_queue() {
     pg_stat_queue_lock.Lock();
     while (!pg_stat_queue.empty()) {
-      PG *pg = pg_stat_queue.front();
+      IPG *pg = pg_stat_queue.front();
       pg_stat_queue.pop_front();
       pg->put("pg_stat_queue");
     }
@@ -1094,17 +1094,17 @@ protected:
   }
 
   // -- generic pg peering --
-  PG::RecoveryCtx create_context();
-  bool compat_must_dispatch_immediately(PG *pg);
-  void dispatch_context(PG::RecoveryCtx &ctx, PG *pg, OSDMapRef curmap);
-  void dispatch_context_transaction(PG::RecoveryCtx &ctx, PG *pg);
+  IPG::RecoveryCtx create_context();
+  bool compat_must_dispatch_immediately(IPG *pg);
+  void dispatch_context(IPG::RecoveryCtx &ctx, IPG *pg, OSDMapRef curmap);
+  void dispatch_context_transaction(IPG::RecoveryCtx &ctx, IPG *pg);
   void do_notifies(map< int,vector<pair<pg_notify_t, pg_interval_map_t> > >& notify_list,
 		   OSDMapRef map);
   void do_queries(map< int, map<pg_t,pg_query_t> >& query_map,
 		  OSDMapRef map);
   void do_infos(map<int, vector<pair<pg_notify_t, pg_interval_map_t> > >& info_map,
 		OSDMapRef map);
-  void repeer(PG *pg, map< int, map<pg_t,pg_query_t> >& query_map);
+  void repeer(IPG *pg, map< int, map<pg_t,pg_query_t> >& query_map);
 
   bool require_mon_peer(Message *m);
   bool require_osd_peer(OpRequestRef op);
@@ -1124,7 +1124,7 @@ protected:
   void handle_pg_recovery_reserve(OpRequestRef op);
 
   void handle_pg_remove(OpRequestRef op);
-  void _remove_pg(PG *pg);
+  void _remove_pg(IPG *pg);
 
   // -- commands --
   struct Command {
@@ -1190,25 +1190,25 @@ protected:
   void do_command(Connection *con, tid_t tid, vector<string>& cmd, bufferlist& data);
 
   // -- pg recovery --
-  xlist<PG*> recovery_queue;
+  xlist<IPG*> recovery_queue;
   utime_t defer_recovery_until;
   int recovery_ops_active;
 #ifdef DEBUG_RECOVERY_OIDS
   map<pg_t, set<hobject_t> > recovery_oids;
 #endif
 
-  struct RecoveryWQ : public ThreadPool::WorkQueue<PG> {
+  struct RecoveryWQ : public ThreadPool::WorkQueue<IPG> {
     OSD *osd;
     RecoveryWQ(OSD *o, time_t ti, ThreadPool *tp)
-      : ThreadPool::WorkQueue<PG>("OSD::RecoveryWQ", ti, ti*10, tp), osd(o) {}
+      : ThreadPool::WorkQueue<IPG>("OSD::RecoveryWQ", ti, ti*10, tp), osd(o) {}
 
     bool _empty() {
       return osd->recovery_queue.empty();
     }
-    bool _enqueue(PG *pg) {
-      if (!pg->recovery_item.is_on_list()) {
+    bool _enqueue(IPG *pg) {
+      if (!pg->get_recovery_item().is_on_list()) {
 	pg->get("RecoveryWQ");
-	osd->recovery_queue.push_back(&pg->recovery_item);
+	osd->recovery_queue.push_back(&pg->get_recovery_item());
 
 	if (g_conf->osd_recovery_delay_start > 0) {
 	  osd->defer_recovery_until = ceph_clock_now(g_ceph_context);
@@ -1218,44 +1218,44 @@ protected:
       }
       return false;
     }
-    void _dequeue(PG *pg) {
-      if (pg->recovery_item.remove_myself())
+    void _dequeue(IPG *pg) {
+      if (pg->get_recovery_item().remove_myself())
 	pg->put("RecoveryWQ");
     }
-    PG *_dequeue() {
+    IPG *_dequeue() {
       if (osd->recovery_queue.empty())
 	return NULL;
       
       if (!osd->_recover_now())
 	return NULL;
 
-      PG *pg = osd->recovery_queue.front();
+      IPG *pg = osd->recovery_queue.front();
       osd->recovery_queue.pop_front();
       return pg;
     }
-    void _queue_front(PG *pg) {
-      if (!pg->recovery_item.is_on_list()) {
+    void _queue_front(IPG *pg) {
+      if (!pg->get_recovery_item().is_on_list()) {
 	pg->get("RecoveryWQ");
-	osd->recovery_queue.push_front(&pg->recovery_item);
+	osd->recovery_queue.push_front(&pg->get_recovery_item());
       }
     }
-    void _process(PG *pg) {
+    void _process(IPG *pg) {
       osd->do_recovery(pg);
       pg->put("RecoveryWQ");
     }
     void _clear() {
       while (!osd->recovery_queue.empty()) {
-	PG *pg = osd->recovery_queue.front();
+	IPG *pg = osd->recovery_queue.front();
 	osd->recovery_queue.pop_front();
 	pg->put("RecoveryWQ");
       }
     }
   } recovery_wq;
 
-  void start_recovery_op(PG *pg, const hobject_t& soid);
-  void finish_recovery_op(PG *pg, const hobject_t& soid, bool dequeue);
-  void defer_recovery(PG *pg);
-  void do_recovery(PG *pg);
+  void start_recovery_op(IPG *pg, const hobject_t& soid);
+  void finish_recovery_op(IPG *pg, const hobject_t& soid, bool dequeue);
+  void defer_recovery(IPG *pg);
+  void do_recovery(IPG *pg);
   bool _recover_now();
 
   // replay / delayed pg activation
@@ -1266,35 +1266,35 @@ protected:
 
 
   // -- snap trimming --
-  xlist<PG*> snap_trim_queue;
+  xlist<IPG*> snap_trim_queue;
   
-  struct SnapTrimWQ : public ThreadPool::WorkQueue<PG> {
+  struct SnapTrimWQ : public ThreadPool::WorkQueue<IPG> {
     OSD *osd;
     SnapTrimWQ(OSD *o, time_t ti, ThreadPool *tp)
-      : ThreadPool::WorkQueue<PG>("OSD::SnapTrimWQ", ti, 0, tp), osd(o) {}
+      : ThreadPool::WorkQueue<IPG>("OSD::SnapTrimWQ", ti, 0, tp), osd(o) {}
 
     bool _empty() {
       return osd->snap_trim_queue.empty();
     }
-    bool _enqueue(PG *pg) {
-      if (pg->snap_trim_item.is_on_list())
+    bool _enqueue(IPG *pg) {
+      if (pg->get_snap_trim_item().is_on_list())
 	return false;
       pg->get("SnapTrimWQ");
-      osd->snap_trim_queue.push_back(&pg->snap_trim_item);
+      osd->snap_trim_queue.push_back(&pg->get_snap_trim_item());
       return true;
     }
-    void _dequeue(PG *pg) {
-      if (pg->snap_trim_item.remove_myself())
+    void _dequeue(IPG *pg) {
+      if (pg->get_snap_trim_item().remove_myself())
 	pg->put("SnapTrimWQ");
     }
-    PG *_dequeue() {
+    IPG *_dequeue() {
       if (osd->snap_trim_queue.empty())
 	return NULL;
-      PG *pg = osd->snap_trim_queue.front();
+      IPG *pg = osd->snap_trim_queue.front();
       osd->snap_trim_queue.pop_front();
       return pg;
     }
-    void _process(PG *pg) {
+    void _process(IPG *pg) {
       pg->snap_trimmer();
       pg->put("SnapTrimWQ");
     }
@@ -1309,88 +1309,88 @@ protected:
   bool scrub_random_backoff();
   bool scrub_should_schedule();
 
-  xlist<PG*> scrub_queue;
+  xlist<IPG*> scrub_queue;
 
-  struct ScrubWQ : public ThreadPool::WorkQueue<PG> {
+  struct ScrubWQ : public ThreadPool::WorkQueue<IPG> {
     OSD *osd;
     ScrubWQ(OSD *o, time_t ti, ThreadPool *tp)
-      : ThreadPool::WorkQueue<PG>("OSD::ScrubWQ", ti, 0, tp), osd(o) {}
+      : ThreadPool::WorkQueue<IPG>("OSD::ScrubWQ", ti, 0, tp), osd(o) {}
 
     bool _empty() {
       return osd->scrub_queue.empty();
     }
-    bool _enqueue(PG *pg) {
-      if (pg->scrub_item.is_on_list()) {
+    bool _enqueue(IPG *pg) {
+      if (pg->get_scrub_item().is_on_list()) {
 	return false;
       }
       pg->get("ScrubWQ");
-      osd->scrub_queue.push_back(&pg->scrub_item);
+      osd->scrub_queue.push_back(&pg->get_scrub_item());
       return true;
     }
-    void _dequeue(PG *pg) {
-      if (pg->scrub_item.remove_myself()) {
+    void _dequeue(IPG *pg) {
+      if (pg->get_scrub_item().remove_myself()) {
 	pg->put("ScrubWQ");
       }
     }
-    PG *_dequeue() {
+    IPG *_dequeue() {
       if (osd->scrub_queue.empty())
 	return NULL;
-      PG *pg = osd->scrub_queue.front();
+      IPG *pg = osd->scrub_queue.front();
       osd->scrub_queue.pop_front();
       return pg;
     }
-    void _process(PG *pg) {
+    void _process(IPG *pg) {
       pg->scrub();
       pg->put("ScrubWQ");
     }
     void _clear() {
       while (!osd->scrub_queue.empty()) {
-	PG *pg = osd->scrub_queue.front();
+	IPG *pg = osd->scrub_queue.front();
 	osd->scrub_queue.pop_front();
 	pg->put("ScrubWQ");
       }
     }
   } scrub_wq;
 
-  struct ScrubFinalizeWQ : public ThreadPool::WorkQueue<PG> {
+  struct ScrubFinalizeWQ : public ThreadPool::WorkQueue<IPG> {
   private:
     OSD *osd;
-    xlist<PG*> scrub_finalize_queue;
+    xlist<IPG*> scrub_finalize_queue;
 
   public:
     ScrubFinalizeWQ(OSD *o, time_t ti, ThreadPool *tp)
-      : ThreadPool::WorkQueue<PG>("OSD::ScrubFinalizeWQ", ti, ti*10, tp), osd(o) {}
+      : ThreadPool::WorkQueue<IPG>("OSD::ScrubFinalizeWQ", ti, ti*10, tp), osd(o) {}
 
     bool _empty() {
       return scrub_finalize_queue.empty();
     }
-    bool _enqueue(PG *pg) {
-      if (pg->scrub_finalize_item.is_on_list()) {
+    bool _enqueue(IPG *pg) {
+      if (pg->get_scrub_finalize_item().is_on_list()) {
 	return false;
       }
       pg->get("ScrubFinalizeWQ");
-      scrub_finalize_queue.push_back(&pg->scrub_finalize_item);
+      scrub_finalize_queue.push_back(&pg->get_scrub_finalize_item());
       return true;
     }
-    void _dequeue(PG *pg) {
-      if (pg->scrub_finalize_item.remove_myself()) {
+    void _dequeue(IPG *pg) {
+      if (pg->get_scrub_finalize_item().remove_myself()) {
 	pg->put("ScrubFinalizeWQ");
       }
     }
-    PG *_dequeue() {
+    IPG *_dequeue() {
       if (scrub_finalize_queue.empty())
 	return NULL;
-      PG *pg = scrub_finalize_queue.front();
+      IPG *pg = scrub_finalize_queue.front();
       scrub_finalize_queue.pop_front();
       return pg;
     }
-    void _process(PG *pg) {
+    void _process(IPG *pg) {
       pg->scrub_finalize();
       pg->put("ScrubFinalizeWQ");
     }
     void _clear() {
       while (!scrub_finalize_queue.empty()) {
-	PG *pg = scrub_finalize_queue.front();
+	IPG *pg = scrub_finalize_queue.front();
 	scrub_finalize_queue.pop_front();
 	pg->put("ScrubFinalizeWQ");
       }
@@ -1431,7 +1431,7 @@ protected:
 	return;
       }
       if (osd->_have_pg(msg->pgid)) {
-	PG *pg = osd->_lookup_lock_pg(msg->pgid);
+	IPG *pg = osd->_lookup_lock_pg(msg->pgid);
 	osd->osd_lock.Unlock();
 	pg->replica_scrub(msg);
 	msg->put();

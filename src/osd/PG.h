@@ -36,6 +36,7 @@
 #include "include/atomic.h"
 #include "SnapMapper.h"
 
+#include "IPG.h"
 #include "OpRequest.h"
 #include "OSDMap.h"
 #include "os/ObjectStore.h"
@@ -70,6 +71,7 @@ class PG;
 void intrusive_ptr_add_ref(PG *pg);
 void intrusive_ptr_release(PG *pg);
 
+#if 0 // moved to IPG 
 #ifdef PG_DEBUG_REFS
   uint64_t get_with_id(PG *pg);
   void put_with_id(PG *pg, uint64_t id);
@@ -147,13 +149,15 @@ struct PGPool {
 
   void update(OSDMapRef map);
 };
+#endif // moved to IPG 
 
 /** PG - Replica Placement Group
  *
  */
 
-class PG {
+class PG : public IPG {
 public:
+#if 0 // moved to IPG 
   /* Exceptions */
   class read_log_error : public buffer::error {
   public:
@@ -166,10 +170,12 @@ public:
   private:
     char buf[512];
   };
+#endif // moved to IPG 
 
-  std::string gen_prefix() const;
+  virtual std::string gen_prefix() const;
 
 
+#if 0 // moved to IPG 
   /**
    * IndexLog - adds in-memory index of the log, by oid.
    * plus some methods to manipulate it all.
@@ -368,27 +374,35 @@ public:
     }
   };
   WRITE_CLASS_ENCODER(OndiskLog)
+#endif // moved to IPG 
 
 
 
   /*** PG ****/
 protected:
   OSDService *osd;
+public:
+  virtual OSDService *get_osd() { return osd; }
+protected:
   OSDriver osdriver;
   SnapMapper snap_mapper;
 public:
-  void update_snap_mapper_bits(uint32_t bits) {
+  virtual void update_snap_mapper_bits(uint32_t bits) {
     snap_mapper.update_bits(bits);
   }
 protected:
   OSDMapRef osdmap_ref;
   PGPool pool;
 
-  OSDMapRef get_osdmap() const {
+  virtual const PGPool& get_pool() const { return pool; }
+
+public:
+  virtual OSDMapRef get_osdmap() const {
     assert(is_locked());
     assert(osdmap_ref);
     return osdmap_ref;
   }
+protected:
 
   /** locking and reference counting.
    * I destroy myself when the reference count hits zero.
@@ -401,6 +415,10 @@ protected:
   Cond _cond;
   atomic_t ref;
 
+public:
+  virtual atomic_t& get_ref() { return ref; }
+protected:
+
 #ifdef PG_DEBUG_REFS
   Mutex _ref_id_lock;
   map<uint64_t, string> _live_ids;
@@ -410,9 +428,10 @@ protected:
 
 public:
   bool deleting;  // true while in removing or OSD is shutting down
+  virtual bool get_deleting() const { return deleting; }
 
-  void lock(bool no_lockdep = false);
-  void unlock() {
+  virtual void lock(bool no_lockdep = false);
+  virtual void unlock() {
     //generic_dout(0) << this << " " << info.pgid << " unlock" << dendl;
     assert(!dirty_info);
     assert(!dirty_big_info);
@@ -422,22 +441,22 @@ public:
 
   /* During handle_osd_map, the osd holds a write lock to the osdmap.
    * *_with_map_lock_held assume that the map_lock is already held */
-  void lock_with_map_lock_held(bool no_lockdep = false);
+  virtual void lock_with_map_lock_held(bool no_lockdep = false);
 
   // assert we still have lock held, and update our map ref
-  void reassert_lock_with_map_lock_held();
+  virtual void reassert_lock_with_map_lock_held();
 
-  void assert_locked() {
+  virtual void assert_locked() {
     assert(_lock.is_locked());
   }
-  bool is_locked() const {
+  virtual bool is_locked() const {
     return _lock.is_locked();
   }
-  void wait() {
+  virtual void wait() {
     assert(_lock.is_locked());
     _cond.Wait(_lock);
   }
-  void kick() {
+  virtual void kick() {
     assert(_lock.is_locked());
     _cond.Signal();
   }
@@ -447,49 +466,74 @@ public:
   void put_with_id(uint64_t);
   void dump_live_ids();
 #endif
-  void get(const string &tag);
-  void put(const string &tag);
+  virtual void get(const string &tag);
+  virtual void put(const string &tag);
 
   bool dirty_info, dirty_big_info, dirty_log;
+  virtual void set_dirty_info(bool _dirty_info) { dirty_info = _dirty_info; }
+  virtual void set_dirty_big_info(bool _dirty_big_info) { dirty_big_info = _dirty_big_info; }
+  virtual void set_dirty_log(bool _dirty_log) { dirty_log = _dirty_log; }
 
 public:
   // pg state
   pg_info_t        info;
+  virtual pg_info_t& get_info() { return info; }
   __u8 info_struct_v;
   static const __u8 cur_struct_v = 7;
-  bool must_upgrade() {
+  virtual bool must_upgrade() {
     return info_struct_v < 7;
   }
-  void upgrade(
+  virtual void upgrade(
     ObjectStore *store,
     const interval_set<snapid_t> &snapcolls);
 
   const coll_t coll;
   IndexedLog  log;
+  virtual const IndexedLog& get_log() const { return log; }
+  virtual IndexedLog& get_log() { return log; }
   static string get_info_key(pg_t pgid) {
     return stringify(pgid) + "_info";
   }
   static string get_biginfo_key(pg_t pgid) {
     return stringify(pgid) + "_biginfo";
   }
+#if 0 // moved to IPG 
   static string get_epoch_key(pg_t pgid) {
     return stringify(pgid) + "_epoch";
   }
+#endif // moved to IPG 
   hobject_t    log_oid;
   hobject_t    biginfo_oid;
   OndiskLog   ondisklog;
   pg_missing_t     missing;
+  virtual const pg_missing_t& get_missing() const { return missing; }
+  virtual pg_missing_t& get_missing() { return missing; }
   map<hobject_t, set<int> > missing_loc;
+  virtual const map<hobject_t, set<int> > get_missing_loc() const { return missing_loc; }
   set<int> missing_loc_sources;           // superset of missing_loc locations
   
   interval_set<snapid_t> snap_collections; // obsolete
+  virtual const interval_set<snapid_t> &get_snap_collections() const { return snap_collections; }
+  virtual void set_snap_collections(const interval_set<snapid_t>& _snap_collections) { snap_collections = _snap_collections; }
   map<epoch_t,pg_interval_t> past_intervals;
-
+  virtual const map<epoch_t,pg_interval_t> &get_past_intervals() const { return past_intervals; }
+  virtual map<epoch_t,pg_interval_t> &get_past_intervals() { return past_intervals; }
   interval_set<snapid_t> snap_trimq;
 
+  virtual const interval_set<snapid_t> &get_snap_trimq() const { return snap_trimq; }
+  virtual interval_set<snapid_t> &get_snap_trimq() { return snap_trimq; }
+  virtual void set_snap_trimq(const interval_set<snapid_t> &_snap_trimq) { snap_trimq = _snap_trimq; }
   /* You should not use these items without taking their respective queue locks
    * (if they have one) */
-  xlist<PG*>::item recovery_item, scrub_item, scrub_finalize_item, snap_trim_item, stat_queue_item;
+private:
+  xlist<IPG*>::item recovery_item, scrub_item, scrub_finalize_item, snap_trim_item, stat_queue_item;
+public:
+  virtual xlist<IPG*>::item& get_recovery_item() { return recovery_item; }
+  virtual xlist<IPG*>::item& get_scrub_item() { return scrub_item; }
+  virtual xlist<IPG*>::item& get_scrub_finalize_item() { return scrub_finalize_item; }
+  virtual xlist<IPG*>::item& get_snap_trim_item() { return snap_trim_item; }
+  virtual xlist<IPG*>::item& get_stat_queue_item() { return stat_queue_item; }
+
   int recovery_ops_active;
   bool waiting_on_backfill;
 #ifdef DEBUG_RECOVERY_OIDS
@@ -497,14 +541,17 @@ public:
 #endif
 
   utime_t replay_until;
+  virtual utime_t get_replay_until() const { return replay_until; }
 
 protected:
   int         role;    // 0 = primary, 1 = replica, -1=none.
   unsigned    state;   // PG_STATE_*
 
   bool send_notify;    ///< true if we are non-primary and should notify the primary
-
 public:
+  virtual bool get_send_notify() const { return send_notify; }
+  virtual void set_send_notify(bool _send_notify) { send_notify = _send_notify; }
+
   eversion_t  last_update_ondisk;    // last_update that has committed; ONLY DEFINED WHEN is_active()
   eversion_t  last_complete_ondisk;  // last_complete that has committed.
   eversion_t  last_update_applied;
@@ -512,12 +559,23 @@ public:
   // primary state
  public:
   vector<int> up, acting, want_acting;
+  virtual const vector<int>& get_up() const { return up; }
+  virtual vector<int>& get_up() { return up; }
+  virtual const vector<int>& get_acting() const { return acting; }
+  virtual vector<int>& get_acting() { return acting; }
+  virtual const vector<int>& get_want_acting() const { return want_acting; }
+  virtual vector<int>& get_want_acting() { return want_acting; }
+
   map<int,eversion_t> peer_last_complete_ondisk;
+  virtual const map<int,eversion_t>& get_peer_last_complete_ondisk() const { return peer_last_complete_ondisk; }
+  virtual map<int,eversion_t>& get_peer_last_complete_ondisk() { return peer_last_complete_ondisk; }
   eversion_t  min_last_complete_ondisk;  // up: min over last_complete_ondisk, peer_last_complete_ondisk
+  virtual const eversion_t &get_min_last_complete_ondisk() const { return min_last_complete_ondisk; }
   eversion_t  pg_trim_to;
 
   // [primary only] content recovery state
  protected:
+#if 0 // moved to IPG 
   struct PriorSet {
     set<int> probe; /// current+prior OSDs we need to probe.
     set<int> down;  /// down osds that would normally be in @a probe and might be interesting.
@@ -533,6 +591,7 @@ public:
 
     bool affected_by_map(const OSDMapRef osdmap, const PG *debug_pg=0) const;
   };
+#endif // moved to IPG 
 
   friend std::ostream& operator<<(std::ostream& oss,
 				  const struct PriorSet &prior);
@@ -541,6 +600,7 @@ public:
 
 
 public:    
+#if 0 // moved to IPG 
   struct RecoveryCtx {
     utime_t start_time;
     map< int, map<pg_t, pg_query_t> > *query_map;
@@ -569,7 +629,7 @@ public:
     NamedState() : state_name(0), enter_time(ceph_clock_now(g_ceph_context)) {}
     virtual ~NamedState() {}
   };
-
+#endif // moved to IPG 
 
 
 protected:
@@ -580,19 +640,43 @@ protected:
    */
   
   bool        need_up_thru;
+public:
+  virtual bool get_need_up_thru() const { return need_up_thru; }
+protected:
   set<int>    stray_set;   // non-acting osds that have PG data.
   eversion_t  oldest_update; // acting: lowest (valid) last_update in active set
   map<int,pg_info_t>    peer_info;   // info from peers (stray or prior)
+public:
+  virtual const map<int,pg_info_t> &get_peer_info() const { return peer_info; }
+  virtual map<int,pg_info_t> &get_peer_info() { return peer_info; }
+protected:
   set<int> peer_purged; // peers purged
+public:
+  virtual const set<int> &get_peer_purged() const { return peer_purged; }
+protected:
   map<int,pg_missing_t> peer_missing;
+public:
+  virtual const map<int,pg_missing_t> &get_peer_missing() const { return peer_missing; }
+  virtual map<int,pg_missing_t> &get_peer_missing() { return peer_missing; }
+protected:
   set<int>             peer_log_requested;  // logs i've requested (and start stamps)
   set<int>             peer_missing_requested;
+public:
+  virtual const set<int> &get_peer_missing_requested() const { return peer_missing_requested; }
+protected:
   set<int>             stray_purged;  // i deleted these strays; ignore racing PGInfo from them
   set<int>             peer_activated;
+public:
+  virtual const set<int> &get_peer_activated() const { return peer_activated; }
+  virtual set<int> &get_peer_activated() { return peer_activated; }
+protected:
 
   // primary-only, recovery-only state
   set<int>             might_have_unfound;  // These osds might have objects on them
 					    // which are unfound on the primary
+public:
+  virtual const set<int> &get_might_have_unfound() const { return might_have_unfound; }
+protected:
   bool need_flush;     // need to flush before any new activity
 
   epoch_t last_peering_reset;
@@ -600,11 +684,15 @@ protected:
 
   /* heartbeat peers */
   void set_probe_targets(const set<int> &probe_set);
-  void clear_probe_targets();
+  virtual void clear_probe_targets();
 public:
   Mutex heartbeat_peer_lock;
   set<int> heartbeat_peers;
   set<int> probe_targets;
+
+  virtual Mutex& get_heartbeat_peer_lock() { return heartbeat_peer_lock; }
+  virtual const set<int>& get_heartbeat_peers() const { return heartbeat_peers; }
+  virtual const set<int>& get_probe_targets() const { return probe_targets; }
 
 protected:
   /**
@@ -681,13 +769,22 @@ protected:
   BackfillInterval backfill_info;
   BackfillInterval peer_backfill_info;
   int backfill_target;
+public:
+  virtual void set_backfill_target(bool _backfill_target) { backfill_target = _backfill_target; }
+protected:
   bool backfill_reserved;
+public:
+  virtual void set_backfill_reserved(bool _backfill_reserved) { backfill_reserved = _backfill_reserved; }
+  virtual bool get_backfill_reserved() const { return backfill_reserved; }
+protected:
   bool backfill_reserving;
-
-  friend class OSD;
+public:
+  virtual void set_backfill_reserving(bool _backfill_reserving) { backfill_reserving = _backfill_reserving; }
+  virtual bool get_backfill_reserving() const { return backfill_reserving; }
+protected:
 
 public:
-  int get_backfill_target() const {
+  virtual int get_backfill_target() const {
     return backfill_target;
   }
 
@@ -696,12 +793,15 @@ protected:
 
   // pg waiters
   bool flushed;
+public:
+  virtual void set_flushed(bool _flushed) { flushed = _flushed; }
 
   // Ops waiting on backfill_pos to change
   list<OpRequestRef> waiting_for_backfill_pos;
 
   list<OpRequestRef> waiting_for_map;
   list<OpRequestRef>            waiting_for_active;
+  virtual list<OpRequestRef> &get_waiting_for_active() { return waiting_for_active; }
   list<OpRequestRef>            waiting_for_all_missing;
   map<hobject_t, list<OpRequestRef> > waiting_for_missing_object,
                                         waiting_for_degraded_object;
@@ -712,7 +812,7 @@ protected:
   void split_ops(PG *child, unsigned split_bits);
 
   void requeue_object_waiters(map<hobject_t, list<OpRequestRef> >& m);
-  void requeue_ops(list<OpRequestRef> &l);
+  virtual void requeue_ops(list<OpRequestRef> &l);
 
   // stats that persist lazily
   object_stat_collection_t unstable_stats;
@@ -722,17 +822,25 @@ protected:
   bool pg_stats_publish_valid;
   pg_stat_t pg_stats_publish;
 
+  virtual Mutex& get_pg_stats_publish_lock() { return pg_stats_publish_lock; }
+  virtual bool get_pg_stats_publish_valid() const { return pg_stats_publish_valid; }
+  virtual pg_stat_t get_pg_stats_publish() const { return pg_stats_publish; }
+
   // for ordering writes
   std::tr1::shared_ptr<ObjectStore::Sequencer> osr;
 
-  void publish_stats_to_osd();
+public:
+  virtual std::tr1::shared_ptr<ObjectStore::Sequencer>& get_osr() { return osr; }
+
+  virtual void publish_stats_to_osd();
+protected:
   void clear_publish_stats();
 
 public:
   void clear_primary_state();
 
  public:
-  bool is_acting(int osd) const { 
+  virtual bool is_acting(int osd) const { 
     for (unsigned i=0; i<acting.size(); i++)
       if (acting[i] == osd) return true;
     return false;
@@ -743,25 +851,25 @@ public:
     return false;
   }
   
-  bool needs_recovery() const;
+  virtual bool needs_recovery() const;
   bool needs_backfill() const;
 
-  void mark_clean();  ///< mark an active pg clean
+  virtual void mark_clean();  ///< mark an active pg clean
 
-  bool _calc_past_interval_range(epoch_t *start, epoch_t *end);
-  void generate_past_intervals();
+  virtual bool _calc_past_interval_range(epoch_t *start, epoch_t *end);
+  virtual void generate_past_intervals();
   void trim_past_intervals();
-  void build_prior(std::auto_ptr<PriorSet> &prior_set);
+  virtual void build_prior(std::auto_ptr<PriorSet> &prior_set);
 
-  void remove_down_peer_info(const OSDMapRef osdmap);
+  virtual void remove_down_peer_info(const OSDMapRef osdmap);
 
-  bool adjust_need_up_thru(const OSDMapRef osdmap);
+  virtual bool adjust_need_up_thru(const OSDMapRef osdmap);
 
-  bool all_unfound_are_queried_or_lost(const OSDMapRef osdmap) const;
+  virtual bool all_unfound_are_queried_or_lost(const OSDMapRef osdmap) const;
   virtual void mark_all_unfound_lost(int how) = 0;
   virtual void dump_recovery_info(Formatter *f) const = 0;
 
-  bool calc_min_last_complete_ondisk() {
+  virtual bool calc_min_last_complete_ondisk() {
     eversion_t min = last_complete_ondisk;
     for (unsigned i=1; i<acting.size(); i++) {
       if (peer_last_complete_ondisk.count(acting[i]) == 0)
@@ -778,11 +886,11 @@ public:
 
   virtual void calc_trim_to() = 0;
 
-  void proc_replica_log(ObjectStore::Transaction& t, pg_info_t &oinfo, pg_log_t &olog,
+  virtual void proc_replica_log(ObjectStore::Transaction& t, pg_info_t &oinfo, pg_log_t &olog,
 			pg_missing_t& omissing, int from);
-  void proc_master_log(ObjectStore::Transaction& t, pg_info_t &oinfo, pg_log_t &olog,
+  virtual void proc_master_log(ObjectStore::Transaction& t, pg_info_t &oinfo, pg_log_t &olog,
 		       pg_missing_t& omissing, int from);
-  bool proc_replica_info(int from, const pg_info_t &info);
+  virtual bool proc_replica_info(int from, const pg_info_t &info);
   void remove_snap_mapped_object(
     ObjectStore::Transaction& t, const hobject_t& soid);
   bool merge_old_entry(ObjectStore::Transaction& t, pg_log_entry_t& oe);
@@ -795,34 +903,34 @@ public:
    * @param [in,out] olog recieved authoritative log
    * @param [in] from peer which sent the information
    */
-  void merge_log(ObjectStore::Transaction& t, pg_info_t &oinfo, pg_log_t &olog, int from);
-  void rewind_divergent_log(ObjectStore::Transaction& t, eversion_t newhead);
-  bool search_for_missing(const pg_info_t &oinfo, const pg_missing_t *omissing,
+  virtual void merge_log(ObjectStore::Transaction& t, pg_info_t &oinfo, pg_log_t &olog, int from);
+  virtual void rewind_divergent_log(ObjectStore::Transaction& t, eversion_t newhead);
+  virtual bool search_for_missing(const pg_info_t &oinfo, const pg_missing_t *omissing,
 			  int fromosd);
 
   void check_for_lost_objects();
   void forget_lost_objects();
 
-  void discover_all_missing(std::map< int, map<pg_t,pg_query_t> > &query_map);
+  virtual void discover_all_missing(std::map< int, map<pg_t,pg_query_t> > &query_map);
   
   void trim_write_ahead();
 
   map<int, pg_info_t>::const_iterator find_best_info(const map<int, pg_info_t> &infos) const;
   bool calc_acting(int& newest_update_osd, vector<int>& want) const;
-  bool choose_acting(int& newest_update_osd);
+  virtual bool choose_acting(int& newest_update_osd);
   void build_might_have_unfound();
-  void replay_queued_ops();
-  void activate(ObjectStore::Transaction& t,
+  virtual void replay_queued_ops();
+  virtual void activate(ObjectStore::Transaction& t,
 		epoch_t query_epoch,
 		list<Context*>& tfin,
 		map< int, map<pg_t,pg_query_t> >& query_map,
 		map<int, vector<pair<pg_notify_t, pg_interval_map_t> > > *activator_map=0);
-  void _activate_committed(epoch_t e);
-  void all_activated_and_committed();
+  virtual void _activate_committed(epoch_t e);
+  virtual void all_activated_and_committed();
 
-  void proc_primary_info(ObjectStore::Transaction &t, const pg_info_t &info);
+  virtual void proc_primary_info(ObjectStore::Transaction &t, const pg_info_t &info);
 
-  bool have_unfound() const { 
+  virtual bool have_unfound() const { 
     return missing.num_missing() > missing_loc.size();
   }
   int get_num_unfound() const {
@@ -831,16 +939,18 @@ public:
 
   virtual void clean_up_local(ObjectStore::Transaction& t) = 0;
 
+#if 0 // moved to IPG 
   virtual int start_recovery_ops(int max, RecoveryCtx *prctx) = 0;
+#endif // moved to IPG 
 
   void purge_strays();
 
-  void update_heartbeat_peers();
+  virtual void update_heartbeat_peers();
 
   Context *finish_sync_event;
 
-  void finish_recovery(list<Context*>& tfin);
-  void _finish_recovery(Context *c);
+  virtual void finish_recovery(list<Context*>& tfin);
+  virtual void _finish_recovery(Context *c);
   void cancel_recovery();
   void clear_recovery_state();
   virtual void _clear_recovery_state() = 0;
@@ -849,7 +959,7 @@ public:
   void start_recovery_op(const hobject_t& soid);
   void finish_recovery_op(const hobject_t& soid, bool dequeue=false);
 
-  void split_into(pg_t child_pgid, PG *child, unsigned split_bits);
+  virtual void split_into(pg_t child_pgid, IPG *child, unsigned split_bits);
   virtual void _split_into(pg_t child_pgid, PG *child, unsigned split_bits) = 0;
 
   loff_t get_log_write_pos() {
@@ -859,6 +969,7 @@ public:
   friend class C_OSD_RepModify_Commit;
 
 
+#if 0 // moved to IPG 
   // -- scrub --
   struct Scrubber {
     Scrubber() :
@@ -1009,6 +1120,11 @@ public:
     }
 
   } scrubber;
+#endif // moved to IPG 
+  Scrubber scrubber;
+
+  virtual Scrubber& get_scrubber() { return scrubber; }
+  virtual const Scrubber& get_scrubber() const { return scrubber; }
 
   bool scrub_after_recovery;
 
@@ -1033,12 +1149,12 @@ public:
 			  map<hobject_t, int> &authoritative,
 			  map<hobject_t, set<int> > &inconsistent_snapcolls,
 			  ostream &errorstream);
-  void scrub();
+  virtual void scrub();
   void classic_scrub();
   void chunky_scrub();
   void scrub_compare_maps();
   void scrub_process_inconsistent();
-  void scrub_finalize();
+  virtual void scrub_finalize();
   void scrub_finish();
   void scrub_clear_state();
   bool scrub_gather_replica_maps();
@@ -1065,20 +1181,21 @@ public:
   void scrub_reserve_replicas();
   void scrub_unreserve_replicas();
   bool scrub_all_replicas_reserved() const;
-  bool sched_scrub();
-  void reg_next_scrub();
-  void unreg_next_scrub();
+  virtual bool sched_scrub();
+  virtual void reg_next_scrub();
+  virtual void unreg_next_scrub();
 
-  void replica_scrub(class MOSDRepScrub *op);
+  virtual void replica_scrub(class MOSDRepScrub *op);
   void sub_op_scrub_map(OpRequestRef op);
   void sub_op_scrub_reserve(OpRequestRef op);
   void sub_op_scrub_reserve_reply(OpRequestRef op);
   void sub_op_scrub_unreserve(OpRequestRef op);
   void sub_op_scrub_stop(OpRequestRef op);
 
-  void reject_reservation();
-  void schedule_backfill_full_retry();
+  virtual void reject_reservation();
+  virtual void schedule_backfill_full_retry();
 
+#if 0 // moved to IPG 
   // -- recovery state --
 
   template <class EVT>
@@ -1123,9 +1240,13 @@ public:
     string get_desc() { return desc; }
   };
   typedef std::tr1::shared_ptr<CephPeeringEvt> CephPeeringEvtRef;
+#endif // moved to IPG 
   list<CephPeeringEvtRef> peering_queue;  // op queue
+  virtual const list<CephPeeringEvtRef> &get_peering_queue() const { return peering_queue; }
+  virtual list<CephPeeringEvtRef> &get_peering_queue() { return peering_queue; }
   list<CephPeeringEvtRef> peering_waiters;
 
+#if 0 // moved to IPG 
   struct QueryState : boost::statechart::event< QueryState > {
     Formatter *f;
     QueryState(Formatter *f) : f(f) {}
@@ -1799,7 +1920,9 @@ public:
       end_handle();
     }
 
-  } recovery_state;
+  }
+#endif // moved to IPG 
+ RecoveryState recovery_state;
 
 
  public:
@@ -1816,37 +1939,37 @@ public:
   pg_t       get_pgid() const { return info.pgid; }
   int        get_nrep() const { return acting.size(); }
 
-  int        get_primary() { return acting.empty() ? -1:acting[0]; }
+  virtual int        get_primary() { return acting.empty() ? -1:acting[0]; }
   
-  int        get_role() const { return role; }
-  void       set_role(int r) { role = r; }
+  virtual int        get_role() const { return role; }
+  virtual void       set_role(int r) { role = r; }
 
-  bool       is_primary() const { return role == 0; }
-  bool       is_replica() const { return role > 0; }
+  virtual bool       is_primary() const { return role == 0; }
+  virtual bool       is_replica() const { return role > 0; }
 
   epoch_t get_last_peering_reset() const { return last_peering_reset; }
   
   //int  get_state() const { return state; }
   bool state_test(int m) const { return (state & m) != 0; }
-  void state_set(int m) { state |= m; }
-  void state_clear(int m) { state &= ~m; }
+  virtual void state_set(int m) { state |= m; }
+  virtual void state_clear(int m) { state &= ~m; }
 
   bool is_complete() const { return info.last_complete == info.last_update; }
-  bool should_send_notify() const { return send_notify; }
+  virtual bool should_send_notify() const { return send_notify; }
 
   int get_state() const { return state; }
-  bool       is_active() const { return state_test(PG_STATE_ACTIVE); }
-  bool       is_peering() const { return state_test(PG_STATE_PEERING); }
+  virtual bool       is_active() const { return state_test(PG_STATE_ACTIVE); }
+  virtual bool       is_peering() const { return state_test(PG_STATE_PEERING); }
   bool       is_down() const { return state_test(PG_STATE_DOWN); }
-  bool       is_replay() const { return state_test(PG_STATE_REPLAY); }
-  bool       is_clean() const { return state_test(PG_STATE_CLEAN); }
+  virtual bool       is_replay() const { return state_test(PG_STATE_REPLAY); }
+  virtual bool       is_clean() const { return state_test(PG_STATE_CLEAN); }
   bool       is_degraded() const { return state_test(PG_STATE_DEGRADED); }
 
   bool       is_scrubbing() const { return state_test(PG_STATE_SCRUBBING); }
 
   bool  is_empty() const { return info.last_update == eversion_t(0,0); }
 
-  void init(int role, vector<int>& up, vector<int>& acting, pg_history_t& history,
+  virtual void init(int role, vector<int>& up, vector<int>& acting, pg_history_t& history,
 	    pg_interval_map_t& pim, ObjectStore::Transaction *t);
 
   // pg on-disk state
@@ -1871,7 +1994,7 @@ public:
     __u8 info_struct_v, bool dirty_big_info, bool force_ver = false);
   static void _write_log(ObjectStore::Transaction& t, pg_log_t &log,
     const hobject_t &log_oid, map<eversion_t, hobject_t> &divergent_priors);
-  void write_if_dirty(ObjectStore::Transaction& t);
+  virtual void write_if_dirty(ObjectStore::Transaction& t);
 
   void add_log_entry(pg_log_entry_t& e, bufferlist& log_bl);
   void append_log(
@@ -1884,9 +2007,9 @@ public:
   static void read_log_old(ObjectStore *store, coll_t coll, hobject_t log_oid,
     const pg_info_t &info, OndiskLog &ondisklog, IndexedLog &log,
     pg_missing_t &missing, ostringstream &oss, const PG *passedpg = NULL);
-  bool check_log_for_corruption(ObjectStore *store);
-  void trim(ObjectStore::Transaction& t, eversion_t v);
-  void trim_peers();
+  virtual bool check_log_for_corruption(ObjectStore *store);
+  virtual void trim(ObjectStore::Transaction& t, eversion_t v);
+  virtual void trim_peers();
 
   std::string get_corrupt_pg_log_name() const;
   static int read_info(
@@ -1894,9 +2017,11 @@ public:
     bufferlist &bl, pg_info_t &info, map<epoch_t,pg_interval_t> &past_intervals,
     hobject_t &biginfo_oid, hobject_t &infos_oid,
     interval_set<snapid_t>  &snap_collections, __u8 &);
-  void read_state(ObjectStore *store, bufferlist &bl);
+  virtual void read_state(ObjectStore *store, bufferlist &bl);
+#if 0 // moved to IPG 
   static epoch_t peek_map_epoch(ObjectStore *store, coll_t coll,
                                hobject_t &infos_oid, bufferlist *bl);
+#endif // moved to IPG 
   void update_snap_map(
     vector<pg_log_entry_t> &log_entries,
     ObjectStore::Transaction& t);
@@ -1905,32 +2030,32 @@ public:
 
   void log_weirdness();
 
-  void queue_snap_trim();
+  virtual void queue_snap_trim();
   bool queue_scrub();
 
   /// share pg info after a pg is active
-  void share_pg_info();
+  virtual void share_pg_info();
   /// share new pg log entries after a pg is active
   void share_pg_log();
 
-  void start_peering_interval(const OSDMapRef lastmap,
+  virtual void start_peering_interval(const OSDMapRef lastmap,
 			      const vector<int>& newup,
 			      const vector<int>& newacting);
-  void start_flush(ObjectStore::Transaction *t,
+  virtual void start_flush(ObjectStore::Transaction *t,
 		   list<Context *> *on_applied,
 		   list<Context *> *on_safe);
-  void set_last_peering_reset();
-  bool pg_has_reset_since(epoch_t e) {
+  virtual void set_last_peering_reset();
+  virtual bool pg_has_reset_since(epoch_t e) {
     assert(is_locked());
     return deleting || e < get_last_peering_reset();
   }
 
-  void update_history_from_master(pg_history_t new_history);
-  void fulfill_info(int from, const pg_query_t &query, 
+  virtual void update_history_from_master(pg_history_t new_history);
+  virtual void fulfill_info(int from, const pg_query_t &query, 
 		    pair<int, pg_info_t> &notify_info);
-  void fulfill_log(int from, const pg_query_t &query, epoch_t query_epoch);
-  bool is_split(OSDMapRef lastmap, OSDMapRef nextmap);
-  bool acting_up_affected(const vector<int>& newup, const vector<int>& newacting);
+  virtual void fulfill_log(int from, const pg_query_t &query, epoch_t query_epoch);
+  virtual bool is_split(OSDMapRef lastmap, OSDMapRef nextmap);
+  virtual bool acting_up_affected(const vector<int>& newup, const vector<int>& newacting);
 
   // OpRequest queueing
   bool can_discard_op(OpRequestRef op);
@@ -1955,25 +2080,25 @@ public:
 
 
   // recovery bits
-  void take_waiters();
-  void queue_peering_event(CephPeeringEvtRef evt);
-  void handle_peering_event(CephPeeringEvtRef evt, RecoveryCtx *rctx);
-  void queue_notify(epoch_t msg_epoch, epoch_t query_epoch,
-		    int from, pg_notify_t& i);
-  void queue_info(epoch_t msg_epoch, epoch_t query_epoch,
+  virtual void take_waiters();
+  virtual void queue_peering_event(CephPeeringEvtRef evt);
+  virtual void handle_peering_event(CephPeeringEvtRef evt, RecoveryCtx *rctx);
+  virtual void queue_notify(epoch_t msg_epoch, epoch_t query_epoch,
+			    int from, pg_notify_t& i);
+  virtual void queue_info(epoch_t msg_epoch, epoch_t query_epoch,
 		  int from, pg_info_t& i);
-  void queue_log(epoch_t msg_epoch, epoch_t query_epoch, int from,
+  virtual void queue_log(epoch_t msg_epoch, epoch_t query_epoch, int from,
 		 MOSDPGLog *msg);
-  void queue_query(epoch_t msg_epoch, epoch_t query_epoch,
+  virtual void queue_query(epoch_t msg_epoch, epoch_t query_epoch,
 		   int from, const pg_query_t& q);
-  void queue_null(epoch_t msg_epoch, epoch_t query_epoch);
-  void queue_flushed(epoch_t started_at);
-  void handle_advance_map(OSDMapRef osdmap, OSDMapRef lastmap,
+  virtual void queue_null(epoch_t msg_epoch, epoch_t query_epoch);
+  virtual void queue_flushed(epoch_t started_at);
+  virtual void handle_advance_map(OSDMapRef osdmap, OSDMapRef lastmap,
 			  vector<int>& newup, vector<int>& newacting,
 			  RecoveryCtx *rctx);
-  void handle_activate_map(RecoveryCtx *rctx);
-  void handle_create(RecoveryCtx *rctx);
-  void handle_loaded(RecoveryCtx *rctx);
+  virtual void handle_activate_map(RecoveryCtx *rctx);
+  virtual void handle_create(RecoveryCtx *rctx);
+  virtual void handle_loaded(RecoveryCtx *rctx);
   void handle_query_state(Formatter *f);
 
   virtual void on_removal(ObjectStore::Transaction *t) = 0;

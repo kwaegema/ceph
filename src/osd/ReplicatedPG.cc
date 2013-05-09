@@ -7479,8 +7479,8 @@ boost::statechart::result ReplicatedPG::WaitingOnReplicas::react(const SnapTrim&
   return transit< NotTrimming >();
 }
 
-void intrusive_ptr_add_ref(ReplicatedPG *pg) { pg->get("intptr"); }
-void intrusive_ptr_release(ReplicatedPG *pg) { pg->put("intptr"); }
+//void intrusive_ptr_add_ref(ReplicatedPG *pg) { pg->get("intptr"); }
+//void intrusive_ptr_release(ReplicatedPG *pg) { pg->put("intptr"); }
 
 #ifdef PG_DEBUG_REFS
 uint64_t get_with_id(ReplicatedPG *pg) { return pg->get_with_id(); }

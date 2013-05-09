@@ -29,8 +29,8 @@
 class MOSDSubOpReply;
 
 class ReplicatedPG;
-void intrusive_ptr_add_ref(ReplicatedPG *pg);
-void intrusive_ptr_release(ReplicatedPG *pg);
+//void intrusive_ptr_add_ref(ReplicatedPG *pg);
+//void intrusive_ptr_release(ReplicatedPG *pg);
 uint64_t get_with_id(ReplicatedPG *pg);
 void put_with_id(ReplicatedPG *pg, uint64_t id);
 
@@ -74,10 +74,9 @@ public:
 };
 
 class ReplicatedPG : public PG {
-  friend class OSD;
   friend class Watch;
 public:  
-
+#if 0 // moved to IPG 
   /*
     object access states:
 
@@ -391,6 +390,7 @@ public:
   };
 
 
+#endif // moved to IPG 
 
 protected:
 
@@ -450,7 +450,7 @@ protected:
 
   void populate_obc_watchers(ObjectContext *obc);
 public:
-  void handle_watch_timeout(WatchRef watch);
+  virtual void handle_watch_timeout(WatchRef watch);
 protected:
 
   ObjectContext *lookup_object_context(const hobject_t& soid) {
@@ -476,7 +476,7 @@ protected:
   }
 
   void context_registry_on_change();
-  void put_object_context(ObjectContext *obc);
+  virtual void put_object_context(ObjectContext *obc);
   void put_object_contexts(map<hobject_t,ObjectContext*>& obcv);
   int find_object_context(const hobject_t& oid,
 			  const object_locator_t& oloc,
@@ -919,8 +919,8 @@ private:
   coll_t temp_coll;
   coll_t get_temp_coll(ObjectStore::Transaction *t);
 public:
-  bool have_temp_coll();
-  coll_t get_temp_coll() {
+  virtual bool have_temp_coll();
+  virtual coll_t get_temp_coll() {
     return temp_coll;
   }
 private:

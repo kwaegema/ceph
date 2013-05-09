@@ -7,7 +7,7 @@
 #include <map>
 
 #include "OSD.h"
-#include "ReplicatedPG.h"
+#include "IPG.h"
 #include "Watch.h"
 
 #include "common/config.h"
@@ -107,7 +107,7 @@ void Notify::do_timeout()
   for (set<WatchRef>::iterator i = _watchers.begin();
        i != _watchers.end();
        ++i) {
-    boost::intrusive_ptr<ReplicatedPG> pg((*i)->get_pg());
+    boost::intrusive_ptr<IPG> pg((*i)->get_pg());
     pg->lock();
     if (!(*i)->is_discarded()) {
       (*i)->cancel_notify(self.lock());
@@ -213,7 +213,7 @@ public:
   void finish(int) { assert(0); /* not used */ }
   void complete(int) {
     dout(10) << "HandleWatchTimeout" << dendl;
-    boost::intrusive_ptr<ReplicatedPG> pg(watch->pg);
+    boost::intrusive_ptr<IPG> pg(watch->pg);
     OSDService *osd(watch->osd);
     osd->watch_lock.Unlock();
     pg->lock();
@@ -256,7 +256,7 @@ string Watch::gen_dbg_prefix() {
 }
 
 Watch::Watch(
-  ReplicatedPG *pg,
+  IPG *pg,
   OSDService *osd,
   ObjectContext *obc,
   uint32_t timeout,
@@ -425,7 +425,7 @@ void Watch::notify_ack(uint64_t notify_id)
 }
 
 WatchRef Watch::makeWatchRef(
-  ReplicatedPG *pg, OSDService *osd,
+  IPG *pg, OSDService *osd,
   ObjectContext *obc, uint32_t timeout, uint64_t cookie, entity_name_t entity)
 {
   WatchRef ret(new Watch(pg, osd, obc, timeout, cookie, entity));
@@ -455,7 +455,7 @@ void WatchConState::reset()
   for (set<WatchRef>::iterator i = _watches.begin();
        i != _watches.end();
        ++i) {
-    boost::intrusive_ptr<ReplicatedPG> pg((*i)->get_pg());
+    boost::intrusive_ptr<IPG> pg((*i)->get_pg());
     pg->lock();
     if (!(*i)->is_discarded()) {
       (*i)->disconnect();

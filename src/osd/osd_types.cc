@@ -17,7 +17,7 @@
 extern "C" {
 #include "crush/hash.h"
 }
-#include "PG.h"
+#include "IPG.h"
 #include "OSDMap.h"
 
 // -- osd_reqid_t --

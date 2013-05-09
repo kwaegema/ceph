@@ -1463,7 +1463,7 @@ void PG::build_might_have_unfound()
 struct C_PG_ActivateCommitted : public Context {
   PGRef pg;
   epoch_t epoch;
-  C_PG_ActivateCommitted(PG *p, epoch_t e)
+  C_PG_ActivateCommitted(IPG *p, epoch_t e)
     : pg(p), epoch(e) {}
   void finish(int r) {
     pg->_activate_committed(epoch);
@@ -2130,8 +2130,9 @@ void PG::split_ops(PG *child, unsigned split_bits) {
   split_list(&waiting_for_active, &(child->waiting_for_active), match, split_bits);
 }
 
-void PG::split_into(pg_t child_pgid, PG *child, unsigned split_bits)
+void PG::split_into(pg_t child_pgid, IPG *ichild, unsigned split_bits)
 {
+  PG *child = dynamic_cast<PG*>(ichild);
   child->update_snap_mapper_bits(split_bits);
   child->osdmap_ref = osdmap_ref;
 
@@ -2648,6 +2649,7 @@ void PG::clear_info_log(
   t->omap_rmkeys(coll_t::META_COLL, infos_oid, keys_to_remove);
 }
 
+#if 0 // moved to IPG 
 epoch_t PG::peek_map_epoch(ObjectStore *store, coll_t coll, hobject_t &infos_oid, bufferlist *bl)
 {
   assert(bl);
@@ -2679,6 +2681,7 @@ epoch_t PG::peek_map_epoch(ObjectStore *store, coll_t coll, hobject_t &infos_oid
   }
   return cur_epoch;
 }
+#endif // moved to IPG 
 
 void PG::_write_log(ObjectStore::Transaction& t, pg_log_t &log,
     const hobject_t &log_oid, map<eversion_t, hobject_t> &divergent_priors)
@@ -5811,6 +5814,7 @@ void PG::read_log_old(ObjectStore *store, coll_t coll, hobject_t log_oid,
   }
 }
 
+#if 0 // moved to IPG 
 /*------------ Recovery State Machine----------------*/
 #undef dout_prefix
 #define dout_prefix (*_dout << context< RecoveryMachine >().pg->gen_prefix() \
@@ -7596,6 +7600,7 @@ void PG::RecoveryState::RecoveryMachine::log_exit(const char *state_name, utime_
   event_count = 0;
   event_time = utime_t();
 }
+#endif // moved to IPG 
 
 
 /*---------------------------------------------------*/
@@ -7607,7 +7612,7 @@ PG::PriorSet::PriorSet(const OSDMap &osdmap,
 		       const vector<int> &up,
 		       const vector<int> &acting,
 		       const pg_info_t &info,
-		       const PG *debug_pg)
+		       const IPG *debug_pg)
   : pg_down(false)
 {
   /*
@@ -7740,7 +7745,7 @@ PG::PriorSet::PriorSet(const OSDMap &osdmap,
 }
 
 // true if the given map affects the prior set
-bool PG::PriorSet::affected_by_map(const OSDMapRef osdmap, const PG *debug_pg) const
+bool PG::PriorSet::affected_by_map(const OSDMapRef osdmap, const IPG *debug_pg) const
 {
   for (set<int>::iterator p = probe.begin();
        p != probe.end();
@@ -7788,8 +7793,8 @@ bool PG::PriorSet::affected_by_map(const OSDMapRef osdmap, const PG *debug_pg) c
   return false;
 }
 
-void intrusive_ptr_add_ref(PG *pg) { pg->get("intptr"); }
-void intrusive_ptr_release(PG *pg) { pg->put("intptr"); }
+void intrusive_ptr_add_ref(IPG *pg) { pg->get("intptr"); }
+void intrusive_ptr_release(IPG *pg) { pg->put("intptr"); }
 
 #ifdef PG_DEBUG_REFS
   uint64_t get_with_id(PG *pg) { return pg->get_with_id(); }
