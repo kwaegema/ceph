@@ -94,12 +94,14 @@ bool ReplicatedPG::same_for_rep_modify_since(epoch_t e)
 
 bool ReplicatedPG::is_missing_object(const hobject_t& soid)
 {
-  return missing.missing.count(soid);
+  return pg_log.get_missing().missing.count(soid);
 }
 
 void ReplicatedPG::wait_for_missing_object(const hobject_t& soid, OpRequestRef op)
 {
   assert(is_missing_object(soid));
+
+  const pg_missing_t &missing = pg_log.get_missing();
 
   // we don't have it (yet).
   map<hobject_t, pg_missing_t::item>::const_iterator g = missing.missing.find(soid);
@@ -128,7 +130,7 @@ void ReplicatedPG::wait_for_all_missing(OpRequestRef op)
 
 bool ReplicatedPG::is_degraded_object(const hobject_t& soid)
 {
-  if (missing.missing.count(soid))
+  if (pg_log.get_missing().missing.count(soid))
     return true;
   for (unsigned i = 1; i < acting.size(); i++) {
     int peer = acting[i];
@@ -262,6 +264,8 @@ int ReplicatedPG::get_pgls_filter(bufferlist::iterator& iter, PGLSFilter **pfilt
 int ReplicatedPG::do_command(vector<string>& cmd, ostream& ss,
 			     bufferlist& idata, bufferlist& odata)
 {
+  const pg_missing_t &missing = pg_log.get_missing();
+
   if (cmd.size() && cmd[0] == "query") {
     JSONFormatter jsf(true);
     jsf.open_object_section("pg");
@@ -348,7 +352,7 @@ int ReplicatedPG::do_command(vector<string>& cmd, ostream& ss,
     }
     jf.dump_int("num_missing", missing.num_missing());
     jf.dump_int("num_unfound", get_num_unfound());
-    map<hobject_t,pg_missing_t::item>::iterator p = missing.missing.upper_bound(offset);
+    map<hobject_t,pg_missing_t::item>::const_iterator p = missing.missing.upper_bound(offset);
     {
       jf.open_array_section("objects");
       int32_t num = 0;
@@ -391,7 +395,7 @@ int ReplicatedPG::do_command(vector<string>& cmd, ostream& ss,
 
 bool ReplicatedPG::pg_op_must_wait(MOSDOp *op)
 {
-  if (missing.missing.empty())
+  if (pg_log.get_missing().missing.empty())
     return false;
   for (vector<OSDOp>::iterator p = op->ops.begin(); p != op->ops.end(); ++p) {
     if (p->op.op == CEPH_OSD_OP_PGLS) {
@@ -474,9 +478,9 @@ void ReplicatedPG::do_pg_op(OpRequestRef op)
 	  break;
 	}
 
-	assert(snapid == CEPH_NOSNAP || missing.missing.empty());
-	map<hobject_t, pg_missing_t::item>::iterator missing_iter =
-	  missing.missing.lower_bound(current);
+	assert(snapid == CEPH_NOSNAP || pg_log.get_missing().missing.empty());
+	map<hobject_t, pg_missing_t::item>::const_iterator missing_iter =
+	  pg_log.get_missing().missing.lower_bound(current);
 	vector<hobject_t>::iterator ls_iter = sentries.begin();
 	while (1) {
 	  if (ls_iter == sentries.end()) {
@@ -484,7 +488,7 @@ void ReplicatedPG::do_pg_op(OpRequestRef op)
 	  }
 
 	  hobject_t candidate;
-	  if (missing_iter == missing.missing.end() ||
+	  if (missing_iter == pg_log.get_missing().missing.end() ||
 	      *ls_iter < missing_iter->first) {
 	    candidate = *(ls_iter++);
 	  } else {
@@ -529,7 +533,7 @@ void ReplicatedPG::do_pg_op(OpRequestRef op)
 					       candidate.get_key()));
 	}
 	if (next.is_max() &&
-	    missing_iter == missing.missing.end() &&
+	    missing_iter == pg_log.get_missing().missing.end() &&
 	    ls_iter == sentries.end()) {
 	  result = 1;
 	}
@@ -577,9 +581,9 @@ void ReplicatedPG::calc_trim_to()
 
   if (min_last_complete_ondisk != eversion_t() &&
       min_last_complete_ondisk != pg_trim_to &&
-      log.approx_size() > target) {
-    size_t num_to_trim = log.approx_size() - target;
-    list<pg_log_entry_t>::const_iterator it = log.log.begin();
+      pg_log.get_log().approx_size() > target) {
+    size_t num_to_trim = pg_log.get_log().approx_size() - target;
+    list<pg_log_entry_t>::const_iterator it = pg_log.get_log().log.begin();
     eversion_t new_trim_to;
     for (size_t i = 0; i < num_to_trim; ++i) {
       new_trim_to = it->version;
@@ -592,7 +596,7 @@ void ReplicatedPG::calc_trim_to()
     }
     dout(10) << "calc_trim_to " << pg_trim_to << " -> " << new_trim_to << dendl;
     pg_trim_to = new_trim_to;
-    assert(pg_trim_to <= log.head);
+    assert(pg_trim_to <= pg_log.get_head());
     assert(pg_trim_to <= min_last_complete_ondisk);
   }
 }
@@ -915,7 +919,7 @@ void ReplicatedPG::do_op(OpRequestRef op)
       return;
     }
 
-    eversion_t oldv = log.get_request_version(ctx->reqid);
+    eversion_t oldv = pg_log.get_log().get_request_version(ctx->reqid);
     if (oldv != eversion_t()) {
       dout(3) << "do_op dup " << ctx->reqid << " was " << oldv << dendl;
       delete ctx;
@@ -944,12 +948,12 @@ void ReplicatedPG::do_op(OpRequestRef op)
     op->mark_started();
 
     // version
-    ctx->at_version = log.head;
+    ctx->at_version = pg_log.get_head();
 
     ctx->at_version.epoch = get_osdmap()->get_epoch();
     ctx->at_version.version++;
     assert(ctx->at_version > info.last_update);
-    assert(ctx->at_version > log.head);
+    assert(ctx->at_version > pg_log.get_head());
 
     ctx->mtime = m->get_mtime();
     
@@ -968,7 +972,7 @@ void ReplicatedPG::do_op(OpRequestRef op)
   utime_t now = ceph_clock_now(g_ceph_context);
 
   // note some basic context for op replication that prepare_transaction may clobber
-  eversion_t old_last_update = log.head;
+  eversion_t old_last_update = pg_log.get_head();
   bool old_exists = obc->obs.exists;
   uint64_t old_size = obc->obs.oi.size;
   eversion_t old_version = obc->obs.oi.version;
@@ -1415,7 +1419,7 @@ ReplicatedPG::RepGather *ReplicatedPG::trim_object(const hobject_t &coid)
   ctx->mtime = ceph_clock_now(g_ceph_context);
 
   ctx->at_version.epoch = get_osdmap()->get_epoch();
-  ctx->at_version.version = log.head.version + 1;
+  ctx->at_version.version = pg_log.get_head().version + 1;
 
   RepGather *repop = new_repop(ctx, obc, rep_tid);
 
@@ -4177,9 +4181,9 @@ void ReplicatedPG::populate_obc_watchers(ObjectContext *obc)
 {
   assert(is_active());
   assert(!is_missing_object(obc->obs.oi.soid) ||
-	 (log.objects.count(obc->obs.oi.soid) && // or this is a revert... see recover_primary()
-	  log.objects[obc->obs.oi.soid]->op == pg_log_entry_t::LOST_REVERT &&
-	  log.objects[obc->obs.oi.soid]->reverting_to == obc->obs.oi.version));
+	 (pg_log.get_log().objects.count(obc->obs.oi.soid) && // or this is a revert... see recover_primary()
+	  pg_log.get_log().objects.find(obc->obs.oi.soid)->second->op == pg_log_entry_t::LOST_REVERT &&
+	  pg_log.get_log().objects.find(obc->obs.oi.soid)->second->reverting_to == obc->obs.oi.version));
 
   dout(10) << "populate_obc_watchers " << obc->obs.oi.soid << dendl;
   assert(obc->watchers.empty());
@@ -4241,7 +4245,7 @@ void ReplicatedPG::handle_watch_timeout(WatchRef watch)
   ctx->mtime = ceph_clock_now(g_ceph_context);
 
   ctx->at_version.epoch = get_osdmap()->get_epoch();
-  ctx->at_version.version = log.head.version + 1;
+  ctx->at_version.version = pg_log.get_head().version + 1;
 
   entity_inst_t nobody;
 
@@ -4257,7 +4261,7 @@ void ReplicatedPG::handle_watch_timeout(WatchRef watch)
 				obc->obs.oi.version,
 				osd_reqid_t(), ctx->mtime));
 
-  eversion_t old_last_update = log.head;
+  eversion_t old_last_update = pg_log.get_head();
   bool old_exists = repop->obc->obs.exists;
   uint64_t old_size = repop->obc->obs.oi.size;
   eversion_t old_version = repop->obc->obs.oi.version;
@@ -4460,7 +4464,7 @@ int ReplicatedPG::find_object_context(const hobject_t& oid,
   put_snapset_context(ssc); // we're done with ssc
   ssc = 0;
 
-  if (missing.is_missing(soid)) {
+  if (pg_log.get_missing().is_missing(soid)) {
     dout(20) << "find_object_context  " << soid << " missing, try again later" << dendl;
     if (psnapid)
       *psnapid = soid.snap;
@@ -4649,7 +4653,7 @@ void ReplicatedPG::sub_op_modify(OpRequestRef op)
   assert(is_replica());
   
   // we better not be missing this.
-  assert(!missing.is_missing(soid));
+  assert(!pg_log.get_missing().is_missing(soid));
 
   int ackerosd = acting[0];
   
@@ -4735,7 +4739,7 @@ void ReplicatedPG::sub_op_modify(OpRequestRef op)
   } else {
     // just trim the log
     if (m->pg_trim_to != eversion_t()) {
-      trim(rm->localt, m->pg_trim_to);
+      pg_log.trim(rm->localt, m->pg_trim_to, log_oid);
       rm->tls.push_back(&rm->localt);
     }
   }

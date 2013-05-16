@@ -36,6 +36,7 @@
 #include "include/atomic.h"
 #include "SnapMapper.h"
 
+#include "PGLog.h"
 #include "OpRequest.h"
 #include "OSDMap.h"
 #include "os/ObjectStore.h"
@@ -154,6 +155,7 @@ struct PGPool {
 
 class PG {
 public:
+#if 0 // PGLog
   /* Exceptions */
   class read_log_error : public buffer::error {
   public:
@@ -166,10 +168,12 @@ public:
   private:
     char buf[512];
   };
+#endif // PGLog
 
   std::string gen_prefix() const;
 
 
+#if 0 // PGLog
   /**
    * IndexLog - adds in-memory index of the log, by oid.
    * plus some methods to manipulate it all.
@@ -368,7 +372,7 @@ public:
     }
   };
   WRITE_CLASS_ENCODER(OndiskLog)
-
+#endif // PGLog
 
 
   /*** PG ****/
@@ -476,7 +480,11 @@ public:
     const interval_set<snapid_t> &snapcolls);
 
   const coll_t coll;
+#if 0 // PGLog
   IndexedLog  log;
+#else // PGLog
+  PGLog  pg_log;
+#endif // PGLog
   static string get_info_key(pg_t pgid) {
     return stringify(pgid) + "_info";
   }
@@ -488,8 +496,10 @@ public:
   }
   hobject_t    log_oid;
   hobject_t    biginfo_oid;
+#if 0 // PGLog
   OndiskLog   ondisklog;
   pg_missing_t     missing;
+#endif // PGLog
   map<hobject_t, set<int> > missing_loc;
   set<int> missing_loc_sources;           // superset of missing_loc locations
   
@@ -787,15 +797,20 @@ public:
 
   virtual void calc_trim_to() = 0;
 
+  bool proc_replica_info(int from, const pg_info_t &info);
+
   void proc_replica_log(ObjectStore::Transaction& t, pg_info_t &oinfo, pg_log_t &olog,
 			pg_missing_t& omissing, int from);
   void proc_master_log(ObjectStore::Transaction& t, pg_info_t &oinfo, pg_log_t &olog,
 		       pg_missing_t& omissing, int from);
-  bool proc_replica_info(int from, const pg_info_t &info);
+#if 0 // PGLog
+   bool proc_replica_info(int from, const pg_info_t &info);
+#endif // PGLog
   void remove_snap_mapped_object(
     ObjectStore::Transaction& t, const hobject_t& soid);
+#if 0 // PGLog
   bool merge_old_entry(ObjectStore::Transaction& t, pg_log_entry_t& oe);
-
+ 
   /**
    * Merges authoratative log/info into current log/info/store
    *
@@ -806,6 +821,7 @@ public:
    */
   void merge_log(ObjectStore::Transaction& t, pg_info_t &oinfo, pg_log_t &olog, int from);
   void rewind_divergent_log(ObjectStore::Transaction& t, eversion_t newhead);
+#endif // PGLog
   bool search_for_missing(const pg_info_t &oinfo, const pg_missing_t *omissing,
 			  int fromosd);
 
@@ -832,10 +848,10 @@ public:
   void proc_primary_info(ObjectStore::Transaction &t, const pg_info_t &info);
 
   bool have_unfound() const { 
-    return missing.num_missing() > missing_loc.size();
+    return pg_log.get_missing().num_missing() > missing_loc.size();
   }
   int get_num_unfound() const {
-    return missing.num_missing() - missing_loc.size();
+    return pg_log.get_missing().num_missing() - missing_loc.size();
   }
 
   virtual void clean_up_local(ObjectStore::Transaction& t) = 0;
@@ -1881,11 +1897,13 @@ private:
   void write_log(ObjectStore::Transaction& t);
 
 public:
+#if 0 // PGLog
   static void clear_info_log(
     pg_t pgid,
     const hobject_t &infos_oid,
     const hobject_t &log_oid,
     ObjectStore::Transaction *t);
+#endif // PGLog
 
   static int _write_info(ObjectStore::Transaction& t, epoch_t epoch,
     pg_info_t &info, coll_t coll,
@@ -1893,13 +1911,16 @@ public:
     interval_set<snapid_t> &snap_collections,
     hobject_t &infos_oid,
     __u8 info_struct_v, bool dirty_big_info, bool force_ver = false);
+#if 0 // PGLog
   static void _write_log(ObjectStore::Transaction& t, pg_log_t &log,
     const hobject_t &log_oid, map<eversion_t, hobject_t> &divergent_priors);
+#endif // PGLog
   void write_if_dirty(ObjectStore::Transaction& t);
 
   void add_log_entry(pg_log_entry_t& e, bufferlist& log_bl);
   void append_log(
     vector<pg_log_entry_t>& logv, eversion_t trim_to, ObjectStore::Transaction &t);
+#if 0 // PGLog
 
   /// return true if the log should be rewritten
   static bool read_log(ObjectStore *store, coll_t coll, hobject_t log_oid,
@@ -1908,8 +1929,13 @@ public:
   static void read_log_old(ObjectStore *store, coll_t coll, hobject_t log_oid,
     const pg_info_t &info, OndiskLog &ondisklog, IndexedLog &log,
     pg_missing_t &missing, ostringstream &oss, const PG *passedpg = NULL);
+#endif // PGLog
   bool check_log_for_corruption(ObjectStore *store);
+#if 0 // PGLog
   void trim(ObjectStore::Transaction& t, eversion_t v);
+#else // PGLog
+public:
+#endif // PGLog
   void trim_peers();
 
   std::string get_corrupt_pg_log_name() const;
@@ -2030,7 +2056,9 @@ public:
   virtual void on_shutdown() = 0;
 };
 
+#if 0 // PGLog
 WRITE_CLASS_ENCODER(PG::OndiskLog)
+#endif // PGLog
 
 ostream& operator<<(ostream& out, const PG& pg);
 

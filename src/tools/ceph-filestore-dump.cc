@@ -32,7 +32,7 @@
 #include "os/FileStore.h"
 #include "common/perf_counters.h"
 #include "common/errno.h"
-#include "osd/PG.h"
+#include "osd/PGLog.h"
 #include "osd/OSD.h"
 
 namespace po = boost::program_options;
@@ -322,12 +322,12 @@ static void invalid_path(string &path)
 }
 
 int get_log(ObjectStore *fs, coll_t coll, pg_t pgid, const pg_info_t &info,
-   PG::IndexedLog &log, pg_missing_t &missing)
+   PGLog::IndexedLog &log, pg_missing_t &missing)
 { 
-  PG::OndiskLog ondisklog;
+  PGLog::OndiskLog ondisklog;
   try {
     ostringstream oss;
-    PG::read_log(fs, coll, log_oid, info, ondisklog, log, missing, oss);
+    PGLog::read_log(fs, coll, log_oid, info, ondisklog, log, missing, oss);
     if (debug && oss.str().size())
       cerr << oss.str() << std::endl;
   }
