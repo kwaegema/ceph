@@ -1730,7 +1730,7 @@ PG* OSD::_make_pg(
 }
 
 
-void OSD::add_newly_split_pg(PG *pg, PG::RecoveryCtx *rctx)
+void OSD::add_newly_split_pg(PG *pg, PGRecoveryState::RecoveryCtx *rctx)
 {
   epoch_t e(service.get_osdmap()->get_epoch());
   pg->get("PGMap");  // For pg_map
@@ -1744,10 +1744,10 @@ void OSD::add_newly_split_pg(PG *pg, PG::RecoveryCtx *rctx)
   pg->handle_loaded(rctx);
   pg->write_if_dirty(*(rctx->transaction));
   pg->queue_null(e, e);
-  map<pg_t, list<PG::CephPeeringEvtRef> >::iterator to_wake =
+  map<pg_t, list<PGRecoveryState::CephPeeringEvtRef> >::iterator to_wake =
     peering_wait_for_split.find(pg->info.pgid);
   if (to_wake != peering_wait_for_split.end()) {
-    for (list<PG::CephPeeringEvtRef>::iterator i =
+    for (list<PGRecoveryState::CephPeeringEvtRef>::iterator i =
 	   to_wake->second.begin();
 	 i != to_wake->second.end();
 	 ++i) {
@@ -1995,7 +1995,7 @@ void OSD::load_pgs()
     int role = pg->get_osdmap()->calc_pg_role(whoami, pg->acting);
     pg->set_role(role);
 
-    PG::RecoveryCtx rctx(0, 0, 0, 0, 0, 0);
+    PGRecoveryState::RecoveryCtx rctx(0, 0, 0, 0, 0, 0);
     pg->handle_loaded(&rctx);
 
     dout(10) << "load_pgs loaded " << *pg << " " << pg->pg_log.get_log() << dendl;
@@ -2140,7 +2140,7 @@ void OSD::handle_pg_peering_evt(
   epoch_t epoch,
   int from,
   bool primary,
-  PG::CephPeeringEvtRef evt)
+  PGRecoveryState::CephPeeringEvtRef evt)
 {
   if (service.splitting(info.pgid)) {
     peering_wait_for_split[info.pgid].push_back(evt);
@@ -2202,7 +2202,7 @@ void OSD::handle_pg_peering_evt(
       &resurrected,
       &old_pg_state);
 
-    PG::RecoveryCtx rctx = create_context();
+    PGRecoveryState::RecoveryCtx rctx = create_context();
     switch (result) {
     case RES_NONE: {
       // ok, create the pg locally using provided Info and History
@@ -5113,7 +5113,7 @@ void OSD::check_osdmap_features()
 void OSD::advance_pg(
   epoch_t osd_epoch, PG *pg,
   ThreadPool::TPHandle &handle,
-  PG::RecoveryCtx *rctx,
+  PGRecoveryState::RecoveryCtx *rctx,
   set<boost::intrusive_ptr<PG> > *new_pgs)
 {
   assert(pg->is_locked());
@@ -5215,7 +5215,7 @@ void OSD::advance_map(ObjectStore::Transaction& t, C_Contexts *tfin)
       waiting_for_pg.erase(p++);
     }
   }
-  map<pg_t, list<PG::CephPeeringEvtRef> >::iterator q =
+  map<pg_t, list<PGRecoveryState::CephPeeringEvtRef> >::iterator q =
     peering_wait_for_split.begin();
   while (q != peering_wait_for_split.end()) {
     pg_t pgid = q->first;
@@ -5569,7 +5569,7 @@ void OSD::split_pgs(
   const set<pg_t> &childpgids, set<boost::intrusive_ptr<PG> > *out_pgs,
   OSDMapRef curmap,
   OSDMapRef nextmap,
-  PG::RecoveryCtx *rctx)
+  PGRecoveryState::RecoveryCtx *rctx)
 {
   unsigned pg_num = nextmap->get_pg_num(
     parent->pool.id);
@@ -5711,7 +5711,7 @@ void OSD::handle_pg_create(OpRequestRef op)
     calc_priors_during(pgid, created, history.same_interval_since, 
 		       creating_pgs[pgid].prior);
 
-    PG::RecoveryCtx rctx = create_context();
+    PGRecoveryState::RecoveryCtx rctx = create_context();
     // poll priors
     set<int>& pset = creating_pgs[pgid].prior;
     dout(10) << "mkpg " << pgid << " e" << created
@@ -5750,7 +5750,7 @@ void OSD::handle_pg_create(OpRequestRef op)
 // ----------------------------------------
 // peering and recovery
 
-PG::RecoveryCtx OSD::create_context()
+PGRecoveryState::RecoveryCtx OSD::create_context()
 {
   ObjectStore::Transaction *t = new ObjectStore::Transaction;
   C_Contexts *on_applied = new C_Contexts(g_ceph_context);
@@ -5761,12 +5761,12 @@ PG::RecoveryCtx OSD::create_context()
     new map<int,vector<pair<pg_notify_t, pg_interval_map_t> > >;
   map<int,vector<pair<pg_notify_t, pg_interval_map_t> > > *info_map =
     new map<int,vector<pair<pg_notify_t, pg_interval_map_t> > >;
-  PG::RecoveryCtx rctx(query_map, info_map, notify_list,
+  PGRecoveryState::RecoveryCtx rctx(query_map, info_map, notify_list,
 		       on_applied, on_safe, t);
   return rctx;
 }
 
-void OSD::dispatch_context_transaction(PG::RecoveryCtx &ctx, PG *pg)
+void OSD::dispatch_context_transaction(PGRecoveryState::RecoveryCtx &ctx, PG *pg)
 {
   if (!ctx.transaction->empty()) {
     ctx.on_applied->add(new ObjectStore::C_DeleteTransaction(ctx.transaction));
@@ -5797,7 +5797,7 @@ bool OSD::compat_must_dispatch_immediately(PG *pg)
   return false;
 }
 
-void OSD::dispatch_context(PG::RecoveryCtx &ctx, PG *pg, OSDMapRef curmap)
+void OSD::dispatch_context(PGRecoveryState::RecoveryCtx &ctx, PG *pg, OSDMapRef curmap)
 {
   if (service.get_osdmap()->is_up(whoami)) {
     do_notifies(*ctx.notify_list, curmap);
@@ -5976,10 +5976,10 @@ void OSD::handle_pg_notify(OpRequestRef op)
     handle_pg_peering_evt(
       it->first.info, it->second,
       it->first.query_epoch, from, true,
-      PG::CephPeeringEvtRef(
-	new PG::CephPeeringEvt(
+      PGRecoveryState::CephPeeringEvtRef(
+	new PGRecoveryState::CephPeeringEvt(
 	  it->first.epoch_sent, it->first.query_epoch,
-	  PG::MNotifyRec(from, it->first)))
+	  PGRecoveryState::MNotifyRec(from, it->first)))
       );
   }
 }
@@ -6005,10 +6005,10 @@ void OSD::handle_pg_log(OpRequestRef op)
   handle_pg_peering_evt(
     m->info, m->past_intervals, m->get_epoch(),
     from, false,
-    PG::CephPeeringEvtRef(
-      new PG::CephPeeringEvt(
+    PGRecoveryState::CephPeeringEvtRef(
+      new PGRecoveryState::CephPeeringEvt(
 	m->get_epoch(), m->get_query_epoch(),
-	PG::MLogRec(from, m)))
+	PGRecoveryState::MLogRec(from, m)))
     );
 }
 
@@ -6037,10 +6037,10 @@ void OSD::handle_pg_info(OpRequestRef op)
     handle_pg_peering_evt(
       p->first.info, p->second, p->first.epoch_sent,
       from, false,
-      PG::CephPeeringEvtRef(
-	new PG::CephPeeringEvt(
+      PGRecoveryState::CephPeeringEvtRef(
+	new PGRecoveryState::CephPeeringEvt(
 	  p->first.epoch_sent, p->first.query_epoch,
-	  PG::MInfoRec(from, p->first.info, p->first.epoch_sent)))
+	  PGRecoveryState::MInfoRec(from, p->first.info, p->first.epoch_sent)))
       );
   }
 }
@@ -6173,25 +6173,25 @@ void OSD::handle_pg_backfill_reserve(OpRequestRef op)
 
   if (m->type == MBackfillReserve::REQUEST) {
     pg->queue_peering_event(
-      PG::CephPeeringEvtRef(
-	new PG::CephPeeringEvt(
+      PGRecoveryState::CephPeeringEvtRef(
+	new PGRecoveryState::CephPeeringEvt(
 	  m->query_epoch,
 	  m->query_epoch,
-	  PG::RequestBackfillPrio(m->priority))));
+	  PGRecoveryState::RequestBackfillPrio(m->priority))));
   } else if (m->type == MBackfillReserve::GRANT) {
     pg->queue_peering_event(
-      PG::CephPeeringEvtRef(
-	new PG::CephPeeringEvt(
+      PGRecoveryState::CephPeeringEvtRef(
+	new PGRecoveryState::CephPeeringEvt(
 	  m->query_epoch,
 	  m->query_epoch,
-	  PG::RemoteBackfillReserved())));
+	  PGRecoveryState::RemoteBackfillReserved())));
   } else if (m->type == MBackfillReserve::REJECT) {
     pg->queue_peering_event(
-      PG::CephPeeringEvtRef(
-	new PG::CephPeeringEvt(
+      PGRecoveryState::CephPeeringEvtRef(
+	new PGRecoveryState::CephPeeringEvt(
 	  m->query_epoch,
 	  m->query_epoch,
-	  PG::RemoteReservationRejected())));
+	  PGRecoveryState::RemoteReservationRejected())));
   } else {
     assert(0);
   }
@@ -6218,25 +6218,25 @@ void OSD::handle_pg_recovery_reserve(OpRequestRef op)
 
   if (m->type == MRecoveryReserve::REQUEST) {
     pg->queue_peering_event(
-      PG::CephPeeringEvtRef(
-	new PG::CephPeeringEvt(
+      PGRecoveryState::CephPeeringEvtRef(
+	new PGRecoveryState::CephPeeringEvt(
 	  m->query_epoch,
 	  m->query_epoch,
-	  PG::RequestRecovery())));
+	  PGRecoveryState::RequestRecovery())));
   } else if (m->type == MRecoveryReserve::GRANT) {
     pg->queue_peering_event(
-      PG::CephPeeringEvtRef(
-	new PG::CephPeeringEvt(
+      PGRecoveryState::CephPeeringEvtRef(
+	new PGRecoveryState::CephPeeringEvt(
 	  m->query_epoch,
 	  m->query_epoch,
-	  PG::RemoteRecoveryReserved())));
+	  PGRecoveryState::RemoteRecoveryReserved())));
   } else if (m->type == MRecoveryReserve::RELEASE) {
     pg->queue_peering_event(
-      PG::CephPeeringEvtRef(
-	new PG::CephPeeringEvt(
+      PGRecoveryState::CephPeeringEvtRef(
+	new PGRecoveryState::CephPeeringEvt(
 	  m->query_epoch,
 	  m->query_epoch,
-	  PG::RecoveryDone())));
+	  PGRecoveryState::RecoveryDone())));
   } else {
     assert(0);
   }
@@ -6279,10 +6279,10 @@ void OSD::handle_pg_query(OpRequestRef op)
 
     if (service.splitting(pgid)) {
       peering_wait_for_split[pgid].push_back(
-	PG::CephPeeringEvtRef(
-	  new PG::CephPeeringEvt(
+	PGRecoveryState::CephPeeringEvtRef(
+	  new PGRecoveryState::CephPeeringEvt(
 	    it->second.epoch_sent, it->second.epoch_sent,
-	    PG::MQuery(from, it->second, it->second.epoch_sent))));
+	    PGRecoveryState::MQuery(from, it->second, it->second.epoch_sent))));
       continue;
     }
 
@@ -6462,14 +6462,19 @@ void OSD::check_replay_queue()
 }
 
 
-bool OSDService::queue_for_recovery(PG *pg)
+bool OSDService::queue_for_recovery(PGRecoveryStateInterface *pg)
 {
-  bool b = recovery_wq.queue(pg);
+  bool b = recovery_wq.queue(static_cast< PG * >(pg));
   if (b)
     dout(10) << "queue_for_recovery queued " << *pg << dendl;
   else
     dout(10) << "queue_for_recovery already queued " << *pg << dendl;
   return b;
+}
+
+void OSDService::dequeue_from_recovery(PGRecoveryStateInterface *pg)
+{
+  recovery_wq.dequeue(static_cast< PG * >(pg));
 }
 
 bool OSD::_recover_now()
@@ -6510,7 +6515,7 @@ void OSD::do_recovery(PG *pg)
     dout(20) << "  active was " << recovery_oids[pg->info.pgid] << dendl;
 #endif
     
-    PG::RecoveryCtx rctx = create_context();
+    PGRecoveryState::RecoveryCtx rctx = create_context();
     int started = pg->start_recovery_ops(max, &rctx);
     dout(10) << "do_recovery started " << started
 	     << " (" << recovery_ops_active << "/" << g_conf->osd_recovery_max_active << " rops) on "
@@ -6971,7 +6976,7 @@ struct C_CompleteSplits : public Context {
     Mutex::Locker l(osd->osd_lock);
     if (osd->is_stopping())
       return;
-    PG::RecoveryCtx rctx = osd->create_context();
+    PGRecoveryState::RecoveryCtx rctx = osd->create_context();
     set<pg_t> to_complete;
     for (set<boost::intrusive_ptr<PG> >::iterator i = pgs.begin();
 	 i != pgs.end();
@@ -6996,7 +7001,7 @@ void OSD::process_peering_events(
   bool need_up_thru = false;
   epoch_t same_interval_since = 0;
   OSDMapRef curmap = service.get_osdmap();
-  PG::RecoveryCtx rctx = create_context();
+  PGRecoveryState::RecoveryCtx rctx = create_context();
   for (list<PG*>::const_iterator i = pgs.begin();
        i != pgs.end();
        ++i) {
@@ -7010,7 +7015,7 @@ void OSD::process_peering_events(
     }
     advance_pg(curmap->get_epoch(), pg, handle, &rctx, &split_pgs);
     if (!pg->peering_queue.empty()) {
-      PG::CephPeeringEvtRef evt = pg->peering_queue.front();
+      PGRecoveryState::CephPeeringEvtRef evt = pg->peering_queue.front();
       pg->peering_queue.pop_front();
       pg->handle_peering_event(evt, &rctx);
     }

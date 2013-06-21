@@ -411,7 +411,8 @@ public:
   void send_pg_temp();
 
   void queue_for_peering(PG *pg);
-  bool queue_for_recovery(PG *pg);
+  bool queue_for_recovery(PGRecoveryStateInterface *pg);
+  void dequeue_from_recovery(PGRecoveryStateInterface *pg);
   bool queue_for_snap_trim(PG *pg) {
     return snap_trim_wq.queue(pg);
   }
@@ -1002,7 +1003,7 @@ private:
   void advance_pg(
     epoch_t advance_to, PG *pg,
     ThreadPool::TPHandle &handle,
-    PG::RecoveryCtx *rctx,
+    PGRecoveryState::RecoveryCtx *rctx,
     set<boost::intrusive_ptr<PG> > *split_pgs
   );
   void advance_map(ObjectStore::Transaction& t, C_Contexts *tfin);
@@ -1043,7 +1044,7 @@ protected:
   // -- placement groups --
   hash_map<pg_t, PG*> pg_map;
   map<pg_t, list<OpRequestRef> > waiting_for_pg;
-  map<pg_t, list<PG::CephPeeringEvtRef> > peering_wait_for_split;
+  map<pg_t, list<PGRecoveryState::CephPeeringEvtRef> > peering_wait_for_split;
   PGRecoveryStats pg_recovery_stats;
 
   PGPool _get_pool(int id, OSDMapRef createmap);
@@ -1077,14 +1078,14 @@ protected:
 
   PG* _make_pg(OSDMapRef createmap, pg_t pgid);
   void add_newly_split_pg(PG *pg,
-			  PG::RecoveryCtx *rctx);
+			  PGRecoveryState::RecoveryCtx *rctx);
 
   void handle_pg_peering_evt(
     const pg_info_t& info,
     pg_interval_map_t& pi,
     epoch_t epoch, int from,
     bool primary,
-    PG::CephPeeringEvtRef evt);
+    PGRecoveryState::CephPeeringEvtRef evt);
   
   void load_pgs();
   void build_past_intervals_parallel();
@@ -1128,7 +1129,7 @@ protected:
     const set<pg_t> &childpgids, set<boost::intrusive_ptr<PG> > *out_pgs,
     OSDMapRef curmap,
     OSDMapRef nextmap,
-    PG::RecoveryCtx *rctx);
+    PGRecoveryState::RecoveryCtx *rctx);
 
   // == monitor interaction ==
   utime_t last_mon_report;
@@ -1211,10 +1212,10 @@ protected:
   }
 
   // -- generic pg peering --
-  PG::RecoveryCtx create_context();
+  PGRecoveryState::RecoveryCtx create_context();
   bool compat_must_dispatch_immediately(PG *pg);
-  void dispatch_context(PG::RecoveryCtx &ctx, PG *pg, OSDMapRef curmap);
-  void dispatch_context_transaction(PG::RecoveryCtx &ctx, PG *pg);
+  void dispatch_context(PGRecoveryState::RecoveryCtx &ctx, PG *pg, OSDMapRef curmap);
+  void dispatch_context_transaction(PGRecoveryState::RecoveryCtx &ctx, PG *pg);
   void do_notifies(map< int,vector<pair<pg_notify_t, pg_interval_map_t> > >& notify_list,
 		   OSDMapRef map);
   void do_queries(map< int, map<pg_t,pg_query_t> >& query_map,

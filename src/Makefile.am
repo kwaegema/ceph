@@ -1537,7 +1537,9 @@ libos_a_CXXFLAGS= ${AM_CXXFLAGS}
 noinst_LIBRARIES += libos.a
 
 libosd_a_SOURCES = \
+	osd/PGRecoveryState.cc \
 	osd/PG.cc \
+	osd/PGPeering.cc \
 	osd/PGLog.cc \
 	osd/ReplicatedPG.cc \
 	osd/Ager.cc \
@@ -2036,7 +2038,10 @@ noinst_HEADERS = \
         osd/ObjectVersioner.h\
 	osd/OpRequest.h\
 	osd/SnapMapper.h\
+        osd/PGRecoveryStateInterface.h\
+        osd/PGRecoveryState.h\
         osd/PG.h\
+        osd/PGPeering.h\
         osd/PGLog.h\
         osd/ReplicatedPG.h\
         osd/Watch.h\
