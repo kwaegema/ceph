@@ -251,14 +251,14 @@ string Watch::gen_dbg_prefix() {
   stringstream ss;
   ss << pg->gen_prefix() << " -- Watch(" 
      << make_pair(cookie, entity)
-     << ", obc->ref=" << (obc ? obc->ref : -1) << ") ";
+     << ") ";
   return ss.str();
 }
 
 Watch::Watch(
   ReplicatedPG *pg,
   OSDService *osd,
-  ObjectContext *obc,
+  ObjectContextRef obc,
   uint32_t timeout,
   uint64_t cookie,
   entity_name_t entity,
@@ -272,14 +272,13 @@ Watch::Watch(
     addr(addr),
     entity(entity),
     discarded(false) {
-  obc->get();
   dout(10) << "Watch()" << dendl;
 }
 
 Watch::~Watch() {
   dout(10) << "~Watch" << dendl;
   // users must have called remove() or discard() prior to this point
-  assert(!obc);
+  assert(obc.expired());
   assert(!conn);
 }
 
@@ -292,11 +291,10 @@ Context *Watch::get_delayed_cb()
   return cb;
 }
 
-ObjectContext *Watch::get_obc()
+ObjectContextRef Watch::get_obc()
 {
-  assert(obc);
-  obc->get();
-  return obc;
+  assert(!obc.expired());
+  return obc.lock();
 }
 
 void Watch::register_cb()
@@ -360,7 +358,7 @@ void Watch::discard_state()
 {
   assert(pg->is_locked());
   assert(!discarded);
-  assert(obc);
+  assert(!obc.expired());
   in_progress_notifies.clear();
   unregister_cb();
   discarded = true;
@@ -370,8 +368,6 @@ void Watch::discard_state()
     sessionref->put();
     conn = ConnectionRef();
   }
-  pg->put_object_context(obc);
-  obc = NULL;
 }
 
 bool Watch::is_discarded()
@@ -428,7 +424,7 @@ void Watch::notify_ack(uint64_t notify_id)
 
 WatchRef Watch::makeWatchRef(
   ReplicatedPG *pg, OSDService *osd,
-  ObjectContext *obc, uint32_t timeout, uint64_t cookie, entity_name_t entity, entity_addr_t addr)
+  ObjectContextRef obc, uint32_t timeout, uint64_t cookie, entity_name_t entity, entity_addr_t addr)
 {
   WatchRef ret(new Watch(pg, osd, obc, timeout, cookie, entity, addr));
   ret->set_self(ret);

@@ -1658,6 +1658,7 @@ libosd_a_SOURCES = \
 	osd/PG.cc \
 	osd/PGLog.cc \
 	osd/ReplicatedPG.cc \
+	osd/PGRegistry.cc \
 	osd/Ager.cc \
 	osd/OSD.cc \
 	osd/OSDCap.cc \
@@ -2176,6 +2177,7 @@ noinst_HEADERS = \
         osd/ReplicatedPG.h\
         osd/Watch.h\
         osd/osd_types.h\
+        osd/PGRegistry.h\
         osdc/Blinker.h\
         osdc/Filer.h\
         osdc/Journaler.h\

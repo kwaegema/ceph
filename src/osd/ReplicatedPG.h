@@ -3,6 +3,9 @@
  * Ceph - scalable distributed file system
  *
  * Copyright (C) 2004-2006 Sage Weil <sage@newdream.net>
+ * Copyright (C) 2013 Cloudwatt <libre.licensing@cloudwatt.com>
+ *
+ * Author: Loic Dachary <loic@dachary.org>
  *
  * This is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -22,6 +25,7 @@
 #include "OSD.h"
 #include "Watch.h"
 #include "OpRequest.h"
+#include "PGRegistry.h"
 
 #include "messages/MOSDOp.h"
 #include "messages/MOSDOpReply.h"
@@ -71,6 +75,87 @@ public:
   }
   virtual ~PGLSParentFilter() {}
   virtual bool filter(bufferlist& xattr_data, bufferlist& outdata);
+};
+
+/*
+ * Capture all object state associated with an in-progress read or write.
+ */
+struct ReplicatedPG_OpContext {
+  OpRequestRef op;
+  osd_reqid_t reqid;
+  vector<OSDOp>& ops;
+
+  const ObjectState *obs; // Old objectstate
+  const SnapSetContextRef snapset; // Old snapset
+
+  ObjectState new_obs;  // resulting ObjectState
+  SnapSet new_snapset;  // resulting SnapSet (in case of a write)
+  //pg_stat_t new_stats;  // resulting Stats
+  object_stat_sum_t delta_stats;
+
+  bool modify;          // (force) modification (even if op_t is empty)
+  bool user_modify;     // user-visible modification
+
+  // side effects
+  list<watch_info_t> watch_connects;
+  list<watch_info_t> watch_disconnects;
+  list<notify_info_t> notifies;
+  struct NotifyAck {
+    boost::optional<uint64_t> watch_cookie;
+    uint64_t notify_id;
+    NotifyAck(uint64_t notify_id) : notify_id(notify_id) {}
+    NotifyAck(uint64_t notify_id, uint64_t cookie)
+      : watch_cookie(cookie), notify_id(notify_id) {}
+  };
+  list<NotifyAck> notify_acks;
+    
+  uint64_t bytes_written, bytes_read;
+
+  utime_t mtime;
+  SnapContext snapc;           // writer snap context
+  eversion_t at_version;       // pg's current version pointer
+  eversion_t reply_version;    // the version that we report the client (depends on the op)
+
+  int current_osd_subop_num;
+
+  ObjectStore::Transaction op_t, local_t;
+  vector<pg_log_entry_t> log;
+
+  interval_set<uint64_t> modified_ranges;
+  ObjectContextRef obc;          // For ref counting purposes
+  map<hobject_t,ObjectContextRef> src_obc;
+  ObjectContextRef clone_obc;    // if we created a clone
+  ObjectContextRef snapset_obc;  // if we created/deleted a snapdir
+
+  int data_off;        // FIXME: we may want to kill this msgr hint off at some point!
+
+  MOSDOpReply *reply;
+
+  utime_t readable_stamp;  // when applied on all replicas
+  ReplicatedPG *pg;
+
+  ReplicatedPG_OpContext(const ReplicatedPG_OpContext& other);
+  const ReplicatedPG_OpContext& operator=(const ReplicatedPG_OpContext& other);
+
+  ReplicatedPG_OpContext(OpRequestRef _op, osd_reqid_t _reqid, vector<OSDOp>& _ops,
+	    const ObjectState *_obs, const SnapSetContextRef _ssc,
+	    ReplicatedPG *_pg) :
+    op(_op), reqid(_reqid), ops(_ops), obs(_obs),
+    snapset(_ssc),
+    new_obs(*_obs),
+    modify(false), user_modify(false),
+    bytes_written(0), bytes_read(0),
+    current_osd_subop_num(0),
+    data_off(0), reply(NULL), pg(_pg) { 
+    if (snapset) {
+      new_snapset = snapset->get_snapset();
+    }
+  }
+  ~ReplicatedPG_OpContext() {
+    assert(!clone_obc);
+    if (reply)
+      reply->put();
+  }
 };
 
 class ReplicatedPG : public PG {
@@ -252,86 +337,7 @@ public:
     }
   };
 
-  /*
-   * Capture all object state associated with an in-progress read or write.
-   */
-  struct OpContext {
-    OpRequestRef op;
-    osd_reqid_t reqid;
-    vector<OSDOp>& ops;
-
-    const ObjectState *obs; // Old objectstate
-    const SnapSet *snapset; // Old snapset
-
-    ObjectState new_obs;  // resulting ObjectState
-    SnapSet new_snapset;  // resulting SnapSet (in case of a write)
-    //pg_stat_t new_stats;  // resulting Stats
-    object_stat_sum_t delta_stats;
-
-    bool modify;          // (force) modification (even if op_t is empty)
-    bool user_modify;     // user-visible modification
-
-    // side effects
-    list<watch_info_t> watch_connects;
-    list<watch_info_t> watch_disconnects;
-    list<notify_info_t> notifies;
-    struct NotifyAck {
-      boost::optional<uint64_t> watch_cookie;
-      uint64_t notify_id;
-      NotifyAck(uint64_t notify_id) : notify_id(notify_id) {}
-      NotifyAck(uint64_t notify_id, uint64_t cookie)
-	: watch_cookie(cookie), notify_id(notify_id) {}
-    };
-    list<NotifyAck> notify_acks;
-    
-    uint64_t bytes_written, bytes_read;
-
-    utime_t mtime;
-    SnapContext snapc;           // writer snap context
-    eversion_t at_version;       // pg's current version pointer
-    eversion_t reply_version;    // the version that we report the client (depends on the op)
-
-    int current_osd_subop_num;
-
-    ObjectStore::Transaction op_t, local_t;
-    vector<pg_log_entry_t> log;
-
-    interval_set<uint64_t> modified_ranges;
-    ObjectContext *obc;          // For ref counting purposes
-    map<hobject_t,ObjectContext*> src_obc;
-    ObjectContext *clone_obc;    // if we created a clone
-    ObjectContext *snapset_obc;  // if we created/deleted a snapdir
-
-    int data_off;        // FIXME: we may want to kill this msgr hint off at some point!
-
-    MOSDOpReply *reply;
-
-    utime_t readable_stamp;  // when applied on all replicas
-    ReplicatedPG *pg;
-
-    OpContext(const OpContext& other);
-    const OpContext& operator=(const OpContext& other);
-
-    OpContext(OpRequestRef _op, osd_reqid_t _reqid, vector<OSDOp>& _ops,
-	      ObjectState *_obs, SnapSetContext *_ssc,
-	      ReplicatedPG *_pg) :
-      op(_op), reqid(_reqid), ops(_ops), obs(_obs), snapset(0),
-      new_obs(_obs->oi, _obs->exists),
-      modify(false), user_modify(false),
-      bytes_written(0), bytes_read(0),
-      current_osd_subop_num(0),
-      obc(0), clone_obc(0), snapset_obc(0), data_off(0), reply(NULL), pg(_pg) { 
-      if (_ssc) {
-	new_snapset = _ssc->snapset;
-	snapset = &_ssc->snapset;
-      }
-    }
-    ~OpContext() {
-      assert(!clone_obc);
-      if (reply)
-	reply->put();
-    }
-  };
+  typedef ReplicatedPG_OpContext OpContext;
 
   /*
    * State on the PG primary associated with the replicated mutation
@@ -344,8 +350,8 @@ public:
     eversion_t v;
 
     OpContext *ctx;
-    ObjectContext *obc;
-    map<hobject_t,ObjectContext*> src_obc;
+    ObjectContextRef obc;
+    map<hobject_t,ObjectContextRef> src_obc;
 
     tid_t rep_tid;
 
@@ -365,7 +371,7 @@ public:
     list<ObjectStore::Transaction*> tls;
     bool queue_snap_trimmer;
     
-    RepGather(OpContext *c, ObjectContext *pi, tid_t rt, 
+    RepGather(OpContext *c, ObjectContextRef pi, tid_t rt, 
 	      eversion_t lc) :
       queue_item(this),
       nref(1),
@@ -404,13 +410,15 @@ protected:
   xlist<RepGather*> repop_queue;
   map<tid_t, RepGather*> repop_map;
 
+  void check_wake();
+
   void apply_repop(RepGather *repop);
   void op_applied(RepGather *repop);
   void op_commit(RepGather *repop);
   void eval_repop(RepGather*);
   void issue_repop(RepGather *repop, utime_t now,
 		   eversion_t old_last_update, bool old_exists, uint64_t old_size, eversion_t old_version);
-  RepGather *new_repop(OpContext *ctx, ObjectContext *obc, tid_t rep_tid);
+  RepGather *new_repop(OpContext *ctx, ObjectContextRef obc, tid_t rep_tid);
   void remove_repop(RepGather *repop);
   void repop_ack(RepGather *repop,
                  int result, int ack_type,
@@ -445,65 +453,16 @@ protected:
   friend class C_OSD_OpApplied;
   friend class C_OnPushCommit;
 
-  // projected object info
-  map<hobject_t, ObjectContext*> object_contexts;
-  map<object_t, SnapSetContext*> snapset_contexts;
+  PGRegistry object_registry;
 
   // debug order that client ops are applied
   map<hobject_t, map<client_t, tid_t> > debug_op_order;
 
-  void populate_obc_watchers(ObjectContext *obc);
-  void check_blacklisted_obc_watchers(ObjectContext *);
-  void check_blacklisted_watchers();
-  void get_watchers(list<obj_watch_item_t> &pg_watchers);
-  void get_obc_watchers(ObjectContext *obc, list<obj_watch_item_t> &pg_watchers);
 public:
   void handle_watch_timeout(WatchRef watch);
 protected:
 
-  ObjectContext *lookup_object_context(const hobject_t& soid) {
-    if (object_contexts.count(soid)) {
-      ObjectContext *obc = object_contexts[soid];
-      obc->ref++;
-      return obc;
-    }
-    return NULL;
-  }
-  ObjectContext *_lookup_object_context(const hobject_t& oid);
-  ObjectContext *create_object_context(const object_info_t& oi, SnapSetContext *ssc);
-  ObjectContext *get_object_context(const hobject_t& soid, bool can_create);
-  void register_object_context(ObjectContext *obc) {
-    if (!obc->registered) {
-      assert(object_contexts.count(obc->obs.oi.soid) == 0);
-      obc->registered = true;
-      object_contexts[obc->obs.oi.soid] = obc;
-    }
-    if (obc->ssc)
-      register_snapset_context(obc->ssc);
-  }
-
-  void context_registry_on_change();
-  void put_object_context(ObjectContext *obc);
-  void put_object_contexts(map<hobject_t,ObjectContext*>& obcv);
-  int find_object_context(const hobject_t& oid,
-			  ObjectContext **pobc,
-			  bool can_create, snapid_t *psnapid=NULL);
-
-  void add_object_context_to_pg_stat(ObjectContext *obc, pg_stat_t *stat);
-
   void get_src_oloc(const object_t& oid, const object_locator_t& oloc, object_locator_t& src_oloc);
-
-  SnapSetContext *create_snapset_context(const object_t& oid);
-  SnapSetContext *get_snapset_context(const object_t& oid, const string &key,
-				      ps_t seed, bool can_create, const string &nspace);
-  void register_snapset_context(SnapSetContext *ssc) {
-    if (!ssc->registered) {
-      assert(snapset_contexts.count(ssc->oid) == 0);
-      ssc->registered = true;
-      snapset_contexts[ssc->oid] = ssc;
-    }
-  }
-  void put_snapset_context(SnapSetContext *ssc);
 
   // push
   struct PushInfo {
@@ -692,7 +651,7 @@ protected:
   int prep_object_replica_pushes(const hobject_t& soid, eversion_t v,
 				 int priority,
 				 map<int, vector<PushOp> > *pushes);
-  void calc_head_subsets(ObjectContext *obc, SnapSet& snapset, const hobject_t& head,
+  void calc_head_subsets(ObjectContextRef obc, SnapSet& snapset, const hobject_t& head,
 			 pg_missing_t& missing,
 			 const hobject_t &last_backfill,
 			 interval_set<uint64_t>& data_subset,
@@ -702,17 +661,17 @@ protected:
 			  interval_set<uint64_t>& data_subset,
 			  map<hobject_t, interval_set<uint64_t> >& clone_subsets);
   void prep_push_to_replica(
-    ObjectContext *obc,
+    ObjectContextRef obc,
     const hobject_t& oid,
     int dest,
     int priority,
     PushOp *push_op);
   void prep_push(int priority,
-		 ObjectContext *obc,
+		 ObjectContextRef obc,
 		 const hobject_t& oid, int dest,
 		 PushOp *op);
   void prep_push(int priority,
-		 ObjectContext *obc,
+		 ObjectContextRef obc,
 		 const hobject_t& soid, int peer,
 		 eversion_t version,
 		 interval_set<uint64_t> &data_subset,
@@ -743,9 +702,8 @@ protected:
   void log_op_stats(OpContext *ctx);
 
   void write_update_size_and_usage(object_stat_sum_t& stats, object_info_t& oi,
-				   SnapSet& ss, interval_set<uint64_t>& modified,
+				   interval_set<uint64_t>& modified,
 				   uint64_t offset, uint64_t length, bool count_bytes);
-  void add_interval_usage(interval_set<uint64_t>& s, object_stat_sum_t& st);  
 
   int prepare_transaction(OpContext *ctx);
   
@@ -809,8 +767,8 @@ protected:
     }
   };
   struct C_OSD_OndiskWriteUnlock : public Context {
-    ObjectContext *obc, *obc2;
-    C_OSD_OndiskWriteUnlock(ObjectContext *o, ObjectContext *o2=0) : obc(o), obc2(o2) {}
+    ObjectContextRef obc, obc2;
+    C_OSD_OndiskWriteUnlock(ObjectContextRef o, ObjectContextRef o2 = ObjectContextRef()) : obc(o), obc2(o2) {}
     void finish(int r) {
       obc->ondisk_write_unlock();
       if (obc2)
@@ -818,17 +776,17 @@ protected:
     }
   };
   struct C_OSD_OndiskWriteUnlockList : public Context {
-    list<ObjectContext*> *pls;
-    C_OSD_OndiskWriteUnlockList(list<ObjectContext*> *l) : pls(l) {}
+    list<ObjectContextRef> *pls;
+    C_OSD_OndiskWriteUnlockList(list<ObjectContextRef> *l) : pls(l) {}
     void finish(int r) {
-      for (list<ObjectContext*>::iterator p = pls->begin(); p != pls->end(); ++p)
+      for (list<ObjectContextRef>::iterator p = pls->begin(); p != pls->end(); ++p)
 	(*p)->ondisk_write_unlock();
     }
   };
   struct C_OSD_AppliedRecoveredObject : public Context {
     ReplicatedPGRef pg;
-    ObjectContext *obc;
-    C_OSD_AppliedRecoveredObject(ReplicatedPG *p, ObjectContext *o) :
+    ObjectContextRef obc;
+    C_OSD_AppliedRecoveredObject(ReplicatedPG *p, ObjectContextRef o) :
       pg(p), obc(o) {}
     void finish(int r) {
       pg->_applied_recovered_object(obc);
@@ -891,7 +849,7 @@ protected:
   void sub_op_modify_commit(RepModify *rm);
 
   void sub_op_modify_reply(OpRequestRef op);
-  void _applied_recovered_object(ObjectContext *obc);
+  void _applied_recovered_object(ObjectContextRef obc);
   void _applied_recovered_object_replica();
   void _committed_pushed_object(epoch_t epoch, eversion_t lc);
   void recover_got(hobject_t oid, eversion_t v);
@@ -955,6 +913,7 @@ public:
   int do_tmapup_slow(OpContext *ctx, bufferlist::iterator& bp, OSDOp& osd_op, bufferlist& bl);
 
   void do_osd_op_effects(OpContext *ctx);
+  void add_interval_usage(interval_set<uint64_t>& s, object_stat_sum_t& delta_stats);
 private:
   bool temp_created;
   coll_t temp_coll;
@@ -1036,10 +995,10 @@ public:
 
   void mark_all_unfound_lost(int what);
   eversion_t pick_newest_available(const hobject_t& oid);
-  ObjectContext *mark_object_lost(ObjectStore::Transaction *t,
+  ObjectContextRef mark_object_lost(ObjectStore::Transaction *t,
 				  const hobject_t& oid, eversion_t version,
 				  utime_t mtime, int what);
-  void _finish_mark_all_unfound_lost(list<ObjectContext*>& obcs);
+  void _finish_mark_all_unfound_lost(list<ObjectContextRef>& obcs);
 
   void on_role_change();
   void on_change();
@@ -1047,6 +1006,10 @@ public:
   void on_flushed();
   void on_removal(ObjectStore::Transaction *t);
   void on_shutdown();
+  virtual void check_blacklisted_watchers();
+  virtual void get_watchers(std::list<obj_watch_item_t>&);
+
+  friend class PGRegistry;
 };
 
 inline ostream& operator<<(ostream& out, ReplicatedPG::RepGather& repop)

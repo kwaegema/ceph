@@ -30,7 +30,7 @@ public:
   typedef std::tr1::shared_ptr<V> VPtr;
   typedef std::tr1::weak_ptr<V> WeakVPtr;
 private:
-  Mutex lock;
+  mutable Mutex lock;
   Cond cond;
   map<K, WeakVPtr> contents;
 
@@ -54,6 +54,10 @@ private:
 public:
   SharedPtrRegistry() : lock("SharedPtrRegistry::lock") {}
 
+  bool empty() const {
+    return contents.empty();
+  }
+
   bool get_next(const K &key, pair<K, V> *next) {
     VPtr next_val;
     Mutex::Locker l(lock);
@@ -65,6 +69,20 @@ public:
       return false;
     if (next)
       *next = make_pair(i->first, *next_val);
+    return true;
+  }
+
+  bool get_next(const K &key, pair<K, VPtr> *next) const {
+    VPtr next_val;
+    Mutex::Locker l(lock);
+    typename map<K, WeakVPtr>::const_iterator i = contents.upper_bound(key);
+    while (i != contents.end() &&
+	   !(next_val = i->second.lock()))
+      ++i;
+    if (i == contents.end())
+      return false;
+    if (next)
+      *next = make_pair(i->first, next_val);
     return true;
   }
 

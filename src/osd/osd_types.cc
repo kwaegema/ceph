@@ -3385,3 +3385,4 @@ void OSDOp::merge_osd_op_vector_out_data(vector<OSDOp>& ops, bufferlist& out)
     }
   }
 }
+
