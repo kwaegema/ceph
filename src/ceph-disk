@@ -1048,7 +1048,12 @@ def prepare_dir(
     journal_uuid,
     journal_dmcrypt = None,
     ):
-    LOG.debug('Preparing osd data dir %s', path)
+
+    if os.path.exists(os.path.join(path, 'magic')):
+        LOG.debug('Data dir %s already exists', path)
+        return
+    else:
+        LOG.debug('Preparing osd data dir %s', path)
 
     if osd_uuid is None:
         osd_uuid = str(uuid.uuid4())
