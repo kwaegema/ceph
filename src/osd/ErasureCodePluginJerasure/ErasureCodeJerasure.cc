@@ -127,8 +127,11 @@ int ErasureCodeJerasure::decode(const set<int> &want_to_read,
     if (chunks.find(i) == chunks.end()) {
       erasures[erasures_count] = i;
       erasures_count++;
-      bufferptr ptr(blocksize);
-      (*decoded)[i].push_front(ptr);
+      if (decoded->find(i) == decoded->end() ||
+	  decoded->find(i)->second.length() != blocksize) {
+	bufferptr ptr(blocksize);
+	(*decoded)[i].push_front(ptr);
+      }
     } else {
       (*decoded)[i] = chunks.find(i)->second;
     }

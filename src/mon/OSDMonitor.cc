@@ -3503,6 +3503,47 @@ bool OSDMonitor::prepare_command(MMonCommand *m)
     wait_for_finished_proposal(new Monitor::C_Command(mon, m, 0, rs,
 					      get_last_committed() + 1));
     return true;
+#if 0
+  } else if (prefix == "osd crush rule create-pyramid") {
+    string name, root, mode, pool;
+    cmd_getval(g_ceph_context, cmdmap, "name", name);
+    cmd_getval(g_ceph_context, cmdmap, "root", root);
+    cmd_getval(g_ceph_context, cmdmap, "mode", mode);
+    cmd_getval(g_ceph_context, cmdmap, "pool", pool);
+    int64_t pool_id = osdmap.lookup_pg_pool_name(poolstr);
+    if (pool_id < 0)
+      ENONENT;
+    const pg_pool_t *p = osdmap.get_pg_pool(pool_id);
+    properties
+
+    if (osdmap.crush->rule_exists(name)) {
+      ss << "rule " << name << " already exists";
+      err = 0;
+      goto reply;
+    }
+
+    CrushWrapper newcrush;
+    _get_pending_crush(newcrush);
+
+    if (newcrush.rule_exists(name)) {
+      ss << "rule " << name << " already exists";
+      err = 0;
+    } else {
+      int rule = newcrush.add_simple_ruleset(name, root, type, mode,
+					     pg_pool_t::TYPE_REPLICATED, &ss);
+      if (rule < 0) {
+	err = rule;
+	goto reply;
+      }
+
+      pending_inc.crush.clear();
+      newcrush.encode(pending_inc.crush);
+    }
+    getline(ss, rs);
+    wait_for_finished_proposal(new Monitor::C_Command(mon, m, 0, rs,
+					      get_last_committed() + 1));
+    return true;
+#endif
 
   } else if (prefix == "osd crush rule rm") {
     string name;

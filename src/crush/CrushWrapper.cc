@@ -707,6 +707,74 @@ void CrushWrapper::reweight(CephContext *cct)
   }
 }
 
+#if 0
+int CrushWrapper::add_erasure_pyramid_ruleset(string name, string root_name,
+                                              map<string,int> steps,
+                                              ostream *err)
+{
+  if (rule_exists(name)) {
+    if (err)
+      *err << "rule " << name << " exists";
+    return -EEXIST;
+  }
+  if (!name_exists(root_name)) {
+    if (err)
+      *err << "root item " << root_name << " does not exist";
+    return -ENOENT;
+  }
+  int root = get_item_id(root_name);
+  int type = 0;
+  if (failure_domain_name.length()) {
+    type = get_type_id(failure_domain_name);
+    if (type < 0) {
+      if (err)
+	*err << "unknown type " << failure_domain_name;
+      return -EINVAL;
+    }
+  }
+  if (mode != "firstn" && mode != "indep") {
+    if (err)
+      *err << "unknown mode " << mode;
+    return -EINVAL;
+  }
+
+  int ruleset = 0;
+  for (int i = 0; i < get_max_rules(); i++) {
+    if (rule_exists(i) &&
+	get_rule_mask_ruleset(i) >= ruleset) {
+      ruleset = get_rule_mask_ruleset(i) + 1;
+    }
+  }
+
+  int steps_count = 2 + steps.size();
+  int min_rep = 3;
+  int max_rep = 20;
+  crush_rule *rule = crush_make_rule(steps, ruleset, pg_pool_t::TYPE_ERASURE, min_rep, max_rep);
+  assert(rule);
+  int step = 0;
+  crush_rule_set_step(rule, step++, CRUSH_RULE_SET_CHOOSELEAF_TRIES, 5, 0);
+  crush_rule_set_step(rule, step++, CRUSH_RULE_TAKE, root, 0);
+  for (map<int,string>::const_iterator p = type_map.rbegin(); p != type_map.rend(); ++p) {
+    // ignore device
+    if (p->first == 0)
+      continue;
+
+    if (steps.find(p->second) != steps.end()) {
+      crush_rule_set_step(rule, step++,
+                          CRUSH_RULE_CHOOSE_INDEP,
+                          CRUSH_CHOOSE_N,
+                          p->type,
+                          steps[p->second]);
+    }
+  }
+  crush_rule_set_step(rule, step++, CRUSH_RULE_EMIT, 0, 0);
+  int rno = crush_add_rule(crush, rule, -1);
+  set_rule_name(rno, name);
+  have_rmaps = false;
+  return rno;
+}
+#endif
+
 int CrushWrapper::add_simple_ruleset(string name, string root_name,
                                      string failure_domain_name,
                                      string mode,

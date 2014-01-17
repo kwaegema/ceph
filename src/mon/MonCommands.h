@@ -442,6 +442,12 @@ COMMAND("osd crush rule create-simple " \
 	"name=mode,type=CephChoices,strings=firstn|indep,req=false",
 	"create crush rule <name> to start from <root>, replicate across buckets of type <type>, using a choose mode of <firstn|indep> (default firstn; indep best for erasure pools)", \
 	"osd", "rw", "cli,rest")
+COMMAND("osd crush rule create-pyramid " \
+	"name=name,type=CephString,goodchars=[A-Za-z0-9-_.] " \
+	"name=root,type=CephString,goodchars=[A-Za-z0-9-_.] " \
+	"name=pool,type=CephPoolname",
+	"create crush rule <name> to start from <root> and suitable for the erasure coded pool <pool>", \
+	"osd", "rw", "cli,rest")
 COMMAND("osd crush rule rm " \
 	"name=name,type=CephString,goodchars=[A-Za-z0-9-_.] ",	\
 	"remove crush rule <name>", "osd", "rw", "cli,rest")
