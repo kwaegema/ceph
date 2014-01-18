@@ -3,7 +3,7 @@
 /*
  * Ceph - scalable distributed file system
  *
- * Copyright (C) 2013 Cloudwatt <libre.licensing@cloudwatt.com>
+ * Copyright (C) 2013,2014 Cloudwatt <libre.licensing@cloudwatt.com>
  *
  * Author: Loic Dachary <loic@dachary.org>
  *
@@ -271,7 +271,7 @@ int main(int argc, char **argv)
 
 /* 
  * Local Variables:
- * compile-command: "cd ../.. ; make -j4 && 
+ * compile-command: "cd ../../.. ; make -j4 && 
  *   make unittest_erasure_code_jerasure && 
  *   valgrind --tool=memcheck --leak-check=full \
  *      ./unittest_erasure_code_jerasure \

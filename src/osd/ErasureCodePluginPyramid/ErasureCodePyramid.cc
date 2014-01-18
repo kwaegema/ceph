@@ -23,6 +23,9 @@
 
 #include "ErasureCodePyramid.h"
 
+// re-include our assert to clobber boost's
+#include "include/assert.h" 
+
 #define dout_subsys ceph_subsys_osd
 #undef dout_prefix
 #define dout_prefix _prefix(_dout)
@@ -271,6 +274,8 @@ int ErasureCodePyramid::init(const map<std::string,std::string> &parameters,
     return r;
 
   string description_string = parameters.find("erasure-code-pyramid")->second;
+
+  dout(10) << "init(" << description_string << ")" << dendl;
 
   r = layers_parse(description_string, description, ss);
   if (r)
