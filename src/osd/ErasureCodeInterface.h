@@ -282,6 +282,8 @@ namespace ceph {
                        const bufferlist &in,
                        map<int, bufferlist> *encoded) = 0;
 
+    virtual int encode(list<bufferlist> &chunks) = 0;
+
     /**
      * Decode the **chunks** and store at least **want_to_read**
      * chunks in **decoded**.
@@ -318,6 +320,8 @@ namespace ceph {
     virtual int decode(const set<int> &want_to_read,
                        const map<int, bufferlist> &chunks,
                        map<int, bufferlist> *decoded) = 0;
+
+    virtual int decode(set<int> erasures, list<bufferlist> &chunks) = 0;
 
     /**
      * Decode the first **get_data_chunk_count()** **chunks** and

@@ -3,7 +3,7 @@
 /*
  * Ceph - scalable distributed file system
  *
- * Copyright (C) 2013 Cloudwatt <libre.licensing@cloudwatt.com>
+ * Copyright (C) 2013,2014 Cloudwatt <libre.licensing@cloudwatt.com>
  *
  * Author: Loic Dachary <loic@dachary.org>
  *
@@ -88,10 +88,10 @@ int ErasureCodeJerasure::encode(const set<int> &want_to_encode,
 {
   unsigned blocksize = get_chunk_size(in.length());
   unsigned padded_length = blocksize * k;
-  dout(10) << "encode adjusted buffer length from " << in.length()
-	   << " to " << padded_length << dendl;
   bufferlist out(in);
   if (padded_length - in.length() > 0) {
+    dout(10) << "encode adjusted buffer length from " << in.length()
+	     << " to " << padded_length << dendl;
     bufferptr pad(padded_length - in.length());
     pad.zero();
     out.push_back(pad);
@@ -100,13 +100,13 @@ int ErasureCodeJerasure::encode(const set<int> &want_to_encode,
   unsigned coding_length = blocksize * m;
   bufferptr coding(buffer::create_page_aligned(coding_length));
   out.push_back(coding);
-  char *chunks[k + m];
+  list<bufferlist> chunks;
   for (int i = 0; i < k + m; i++) {
     bufferlist &chunk = (*encoded)[i];
     chunk.substr_of(out, i * blocksize, blocksize);
-    chunks[i] = chunk.c_str();
+    chunks.push_back(chunk);
   }
-  jerasure_encode(&chunks[0], &chunks[k], blocksize);
+  encode(chunks);
   for (int i = 0; i < k + m; i++) {
     if (want_to_encode.count(i) == 0)
       encoded->erase(i);
@@ -114,38 +114,67 @@ int ErasureCodeJerasure::encode(const set<int> &want_to_encode,
   return 0;
 }
 
+int ErasureCodeJerasure::encode(list<bufferlist> &chunks)
+{
+  assert(chunks.size() == (unsigned int)(k + m));
+  char *buffers[k + m];
+  unsigned int i = 0;
+  for (list<bufferlist>::iterator chunk = chunks.begin();
+       chunk != chunks.end();
+       chunk++, i++)
+    buffers[i] = chunk->c_str();
+  jerasure_encode(&buffers[0], &buffers[k], chunks.front().length());
+  return 0;
+}
+
 int ErasureCodeJerasure::decode(const set<int> &want_to_read,
                                 const map<int, bufferlist> &chunks,
                                 map<int, bufferlist> *decoded)
 {
-  unsigned blocksize = (*chunks.begin()).second.length();
-  int erasures[k + m + 1];
-  int erasures_count = 0;
-  char *data[k];
-  char *coding[m];
+  unsigned blocksize = chunks.begin()->second.length();
+  list<bufferlist> buffers;
+  set<int> erasures;
   for (int i =  0; i < k + m; i++) {
     if (chunks.find(i) == chunks.end()) {
-      erasures[erasures_count] = i;
-      erasures_count++;
+      erasures.insert(i);
       if (decoded->find(i) == decoded->end() ||
 	  decoded->find(i)->second.length() != blocksize) {
-	bufferptr ptr(blocksize);
+	bufferptr ptr(buffer::create_page_aligned(blocksize));
 	(*decoded)[i].push_front(ptr);
       }
     } else {
       (*decoded)[i] = chunks.find(i)->second;
     }
-    if (i < k)
-      data[i] = (*decoded)[i].c_str();
-    else
-      coding[i - k] = (*decoded)[i].c_str();
+    buffers.push_back((*decoded)[i]);
   }
-  erasures[erasures_count] = -1;
 
-  if (erasures_count > 0)
-    return jerasure_decode(erasures, data, coding, blocksize);
-  else
+  return decode(erasures, buffers);
+}
+
+int ErasureCodeJerasure::decode(set<int> erasures, list<bufferlist> &chunks)
+{
+  if (erasures.empty())
     return 0;
+  
+  int e[k + m + 1];
+  int e_count = 0;
+
+  char *data[k];
+  char *coding[m];
+
+  int i = 0;
+  for (list<bufferlist>::iterator chunk = chunks.begin();
+       chunk != chunks.end();
+       chunk++, i++) {
+    if (i < k)
+      data[i] = chunk->c_str();
+    else
+      coding[i - k] = chunk->c_str();
+    if (erasures.find(i) != erasures.end())
+      e[e_count++] = i;
+  }
+  e[e_count] = -1;
+  return jerasure_decode(e, data, coding, chunks.front().length());
 }
 
 int ErasureCodeJerasure::to_int(const std::string &name,
