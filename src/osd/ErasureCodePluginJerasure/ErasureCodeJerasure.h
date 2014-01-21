@@ -60,7 +60,7 @@ public:
                      const map<int, bufferlist> &chunks,
                      map<int, bufferlist> *decoded);
 
-  virtual int decode(set<int> erasures, list<bufferlist> &chunks);
+  virtual int decode(list<bool> erasures, list<bufferlist> &chunks);
 
   void init(const map<std::string,std::string> &parameters);
   virtual void jerasure_encode(char **data,

@@ -1,4 +1,5 @@
 include test/osd/ErasureCodePluginJerasure/Makefile.am
+include test/osd/ErasureCodePluginPyramid/Makefile.am
 
 ## Unknown/other tests
 

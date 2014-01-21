@@ -38,11 +38,12 @@ class ErasureCodePyramid : public ErasureCodeInterface {
 public:
   struct Layer {
     ErasureCodeInterfaceRef erasure_code;
-    map<string,string> parameters;
-    const char *mapping;
-    unsigned int mapping_length;
+    string mapping;
+    list<Layer> layers;
   };
-  vector<Layer> layers;
+  Layer layer;
+  map<string,string> parameters;
+  string directory;
   unsigned int chunk_count;
   unsigned int data_chunk_count;
 
@@ -53,7 +54,7 @@ public:
   }
 
   virtual unsigned int get_data_chunk_count() const {
-    return layers.front().erasure_code->get_data_chunk_count();
+    return data_chunk_count;
   }
 
   virtual unsigned int get_chunk_size(unsigned int object_size) const;
@@ -70,9 +71,13 @@ public:
                      const bufferlist &in,
                      map<int, bufferlist> *encoded);
 
+  virtual int encode(list<bufferlist> &chunks);
+
   virtual int decode(const set<int> &want_to_read,
                      const map<int, bufferlist> &chunks,
                      map<int, bufferlist> *decoded);
+
+  virtual int decode(list<bool> erasures, list<bufferlist> &chunks);
 
   int init(const map<std::string,std::string> &parameters, ostream *ss);
 

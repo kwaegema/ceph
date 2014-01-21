@@ -321,7 +321,7 @@ namespace ceph {
                        const map<int, bufferlist> &chunks,
                        map<int, bufferlist> *decoded) = 0;
 
-    virtual int decode(set<int> erasures, list<bufferlist> &chunks) = 0;
+    virtual int decode(list<bool> erasures, list<bufferlist> &chunks) = 0;
 
     /**
      * Decode the first **get_data_chunk_count()** **chunks** and

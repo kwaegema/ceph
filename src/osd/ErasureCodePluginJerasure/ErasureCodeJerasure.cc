@@ -133,16 +133,17 @@ int ErasureCodeJerasure::decode(const set<int> &want_to_read,
 {
   unsigned blocksize = chunks.begin()->second.length();
   list<bufferlist> buffers;
-  set<int> erasures;
+  list<bool> erasures;
   for (int i =  0; i < k + m; i++) {
     if (chunks.find(i) == chunks.end()) {
-      erasures.insert(i);
+      erasures.push_back(true);
       if (decoded->find(i) == decoded->end() ||
 	  decoded->find(i)->second.length() != blocksize) {
 	bufferptr ptr(buffer::create_page_aligned(blocksize));
 	(*decoded)[i].push_front(ptr);
       }
     } else {
+      erasures.push_back(false);
       (*decoded)[i] = chunks.find(i)->second;
     }
     buffers.push_back((*decoded)[i]);
@@ -151,11 +152,8 @@ int ErasureCodeJerasure::decode(const set<int> &want_to_read,
   return decode(erasures, buffers);
 }
 
-int ErasureCodeJerasure::decode(set<int> erasures, list<bufferlist> &chunks)
+int ErasureCodeJerasure::decode(list<bool> erasures, list<bufferlist> &chunks)
 {
-  if (erasures.empty())
-    return 0;
-  
   int e[k + m + 1];
   int e_count = 0;
 
@@ -170,11 +168,15 @@ int ErasureCodeJerasure::decode(set<int> erasures, list<bufferlist> &chunks)
       data[i] = chunk->c_str();
     else
       coding[i - k] = chunk->c_str();
-    if (erasures.find(i) != erasures.end())
+    if (erasures.front())
       e[e_count++] = i;
+    erasures.pop_front();
   }
   e[e_count] = -1;
-  return jerasure_decode(e, data, coding, chunks.front().length());
+  if (e_count > 0)
+    return jerasure_decode(e, data, coding, chunks.front().length());
+  else
+    return 0;
 }
 
 int ErasureCodeJerasure::to_int(const std::string &name,

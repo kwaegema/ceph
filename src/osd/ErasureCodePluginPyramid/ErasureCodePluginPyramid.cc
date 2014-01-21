@@ -37,6 +37,7 @@ public:
     ErasureCodePyramid *interface;
     interface = new ErasureCodePyramid();
     stringstream ass;
+    assert(parameters.count("erasure-code-directory") != 0);
     int r = interface->init(parameters, &ass);
     if (r) {
       derr << ass.str() << dendl;
