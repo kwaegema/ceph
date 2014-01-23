@@ -19,7 +19,7 @@
 
 #include "include/err.h"
 #include "json_spirit/json_spirit.h"
-#include "osd/ErasureCodeInterface.h"
+#include "osd/ErasureCode.h"
 
 #define ERROR_PYRAMID_ARRAY		-(MAX_ERRNO + 1)
 #define ERROR_PYRAMID_OBJECT		-(MAX_ERRNO + 2)
@@ -33,16 +33,21 @@
 #define ERROR_PYRAMID_MAPPING_SIZE	-(MAX_ERRNO + 10)
 #define ERROR_PYRAMID_MISSING_FIELD	-(MAX_ERRNO + 11)
 #define ERROR_PYRAMID_COUNT_CONSTRAINT	-(MAX_ERRNO + 12)
+#define ERROR_PYRAMID_FIRST_MAPPING	-(MAX_ERRNO + 13)
 
-class ErasureCodePyramid : public ErasureCodeInterface {
+class ErasureCodePyramid : public ErasureCode {
 public:
   struct Layer {
     ErasureCodeInterfaceRef erasure_code;
     string mapping;
-    list<Layer> layers;
+    vector<Layer> layers;
   };
   Layer layer;
-  map<string,string> parameters;
+  struct Description {
+    map<string,string> parameters;
+    unsigned int size;
+  };
+  vector<Description> descriptions;
   string directory;
   unsigned int chunk_count;
   unsigned int data_chunk_count;
@@ -59,25 +64,24 @@ public:
 
   virtual unsigned int get_chunk_size(unsigned int object_size) const;
 
-  virtual int minimum_to_decode(const set<int> &want_to_read,
-                                const set<int> &available_chunks,
-                                set<int> *minimum);
+  int layer_encode(Layer &layer, vector<bufferlist> &chunks);
 
-  virtual int minimum_to_decode_with_cost(const set<int> &want_to_read,
-                                          const map<int, int> &available,
-                                          set<int> *minimum);
+  virtual int encode_chunks(vector<bufferlist> &chunks);
 
-  virtual int encode(const set<int> &want_to_encode,
-                     const bufferlist &in,
-                     map<int, bufferlist> *encoded);
+    virtual int encode(const set<int> &want_to_encode,
+                       const bufferlist &in,
+                       map<int, bufferlist> *encoded);
 
-  virtual int encode(list<bufferlist> &chunks);
+  int layer_decode(Layer &layer,
+		   vector<bool> *erasures,
+		   vector<bufferlist> &chunks);
 
-  virtual int decode(const set<int> &want_to_read,
-                     const map<int, bufferlist> &chunks,
-                     map<int, bufferlist> *decoded);
+  virtual int decode_chunks(vector<bool> erasures,
+			    vector<bufferlist> &chunks);
 
-  virtual int decode(list<bool> erasures, list<bufferlist> &chunks);
+    virtual int decode(const set<int> &want_to_read,
+                       const map<int, bufferlist> &chunks,
+                       map<int, bufferlist> *decoded);
 
   int init(const map<std::string,std::string> &parameters, ostream *ss);
 
@@ -87,9 +91,16 @@ public:
   int layers_parse(string description_string,
 		   json_spirit::mArray description,
 		   ostream *ss);
-  int layers_init(string description_string, ostream *ss);
+  int layers_init(unsigned int description_index,
+		  const string &mapping,
+		  unsigned int divisor,
+		  Layer *layer);
   int layers_sanity_checks(string description_string,
 			   ostream *ss) const;
+  int layer_sanity_checks(string description_string,
+			  const Layer &layer,
+			  int level,
+			  ostream *ss) const;
 };
 
 #endif

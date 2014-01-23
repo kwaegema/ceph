@@ -1,9 +1,9 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*- 
 // vim: ts=8 sw=2 smarttab
 /*
- * Ceph - scalable distributed file system
+ * Ceph distributed storage system
  *
- * Copyright (C) 2013 Cloudwatt <libre.licensing@cloudwatt.com>
+ * Copyright (C) 2013,2014 Cloudwatt <libre.licensing@cloudwatt.com>
  *
  * Author: Loic Dachary <loic@dachary.org>
  *
@@ -142,6 +142,7 @@
 
 #include <map>
 #include <set>
+#include <vector>
 #include "include/memory.h"
 #include "include/buffer.h"
 
@@ -282,7 +283,7 @@ namespace ceph {
                        const bufferlist &in,
                        map<int, bufferlist> *encoded) = 0;
 
-    virtual int encode(list<bufferlist> &chunks) = 0;
+    virtual int encode_chunks(vector<bufferlist> &chunks) = 0;
 
     /**
      * Decode the **chunks** and store at least **want_to_read**
@@ -321,7 +322,8 @@ namespace ceph {
                        const map<int, bufferlist> &chunks,
                        map<int, bufferlist> *decoded) = 0;
 
-    virtual int decode(list<bool> erasures, list<bufferlist> &chunks) = 0;
+    virtual int decode_chunks(vector<bool> erasures,
+			      vector<bufferlist> &chunks) = 0;
 
     /**
      * Decode the first **get_data_chunk_count()** **chunks** and
@@ -334,17 +336,7 @@ namespace ceph {
      * @return **0** on success or a negative errno on error.
      */
     virtual int decode_concat(const map<int, bufferlist> &chunks,
-			      bufferlist *decoded) {
-      set<int> want_to_read;
-      for (unsigned int i = 0; i < get_data_chunk_count(); i++)
-	want_to_read.insert(i);
-      map<int, bufferlist> decoded_map;
-      int r = decode(want_to_read, chunks, &decoded_map);
-      if (r == 0)
-	for (unsigned int i = 0; i < get_data_chunk_count(); i++)
-	  decoded->claim_append(decoded_map[i]);
-      return r;
-    }
+			      bufferlist *decoded) = 0;
   };
 
   typedef ceph::shared_ptr<ErasureCodeInterface> ErasureCodeInterfaceRef;

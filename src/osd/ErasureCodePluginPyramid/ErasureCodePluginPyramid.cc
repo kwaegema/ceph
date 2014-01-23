@@ -18,7 +18,7 @@
 #include "osd/ErasureCodePlugin.h"
 #include "ErasureCodePyramid.h"
 
-// re-include our assert to clobber boost's
+// re-include our assert
 #include "include/assert.h" 
 
 #define dout_subsys ceph_subsys_osd

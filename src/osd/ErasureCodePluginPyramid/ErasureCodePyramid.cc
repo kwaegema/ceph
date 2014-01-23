@@ -44,7 +44,6 @@ static ostream& _prefix(std::ostream* _dout)
    000000^111111^222222^ datacenter
    0000^^-0000^^-0000^^- 
 
-[
     { "plugin": "xor",
       "k": 6,
       "m": 1,
@@ -57,6 +56,8 @@ static ostream& _prefix(std::ostream* _dout)
       "k": 12,
       "m": 6,
       "mapping": "0000^^-0000^^-0000^^-",
+      "layer": [
+      ]
     },
 ]
 
@@ -153,12 +154,10 @@ int ErasureCodePyramid::layers_parse(string description_string,
 				     json_spirit::mArray description,
 				     ostream *ss)
 {
-  ErasureCodePluginRegistry &registry = ErasureCodePluginRegistry::instance();
-
   int position = 0;
   for (vector<json_spirit::mValue>::iterator i = description.begin();
        i != description.end();
-       ++i, ++position) {
+       i++, position++) {
     if (i->type() != json_spirit::obj_type) {
       stringstream json_string;
       json_spirit::write(*i, json_string);
@@ -166,121 +165,147 @@ int ErasureCodePyramid::layers_parse(string description_string,
 	  << description_string << " must be a JSON object but "
 	  << json_string.str() << " at position " << position
 	  << " is of type " << i->type() << " instead";
-      return ERROR_PYRAMID_TYPE;
+      return ERROR_PYRAMID_OBJECT;
     }
     json_spirit::mObject layer_json = i->get_obj();
-    Layer layer;
+    map<string, string> parameters;
+    int size = 1;
     for (map<string, json_spirit::mValue>::iterator j = layer_json.begin();
 	 j != layer_json.end();
 	 ++j) {
-      if (j->second.type() != json_spirit::str_type) {
+      if (j->first == "size") {
+	if (j->second.type() != json_spirit::int_type) {
+	  stringstream json_string;
+	  json_spirit::write(*i, json_string);
+	  *ss << "element " << j->first << " from object "
+	      << json_string.str() << " at position " << position
+	      << " is of type " << j->second.type() << " instead of int";
+	  return ERROR_PYRAMID_INT;
+	}
+	size = j->second.get_int();
+      } else if (j->second.type() != json_spirit::str_type) {
 	stringstream json_string;
 	json_spirit::write(*i, json_string);
 	*ss << "element " << j->first << " from object "
 	    << json_string.str() << " at position " << position
-	    << " is of type " << j->second.type() << " instead";
+	    << " is of type " << j->second.type() << " instead of string";
 	return ERROR_PYRAMID_STR;
+      } else {
+	parameters[j->first] = j->second.get_str();
       }
-      layer.parameters[j->first] = j->second.get_str();
     }
-    if (layer.parameters.count("erasure-code-plugin") == 0) {
-      stringstream json_string;
-      json_spirit::write(*i, json_string);
-      *ss << "missing \"erasure-code-plugin\" entry in " 
-	  << json_string.str() << " at position " << position;
-      return ERROR_PYRAMID_PLUGIN;
-    }
-    layer.parameters["erasure-code-directory"] = directory;
-    int r = registry.factory(layer.parameters["erasure-code-plugin"],
-			     layer.parameters,
-			     &layer.erasure_code);
-    if (r)
-      return r;
-    layers.push_back(layer);
+    Description description;
+    description.size = size;
+    description.parameters = parameters;
+    descriptions.push_back(description);
   }
+
+  //  reverse(descriptions.begin(), descriptions.end());
 
   return 0;
 }
 
-int ErasureCodePyramid::layers_init(string description_string, ostream *ss)
+
+int ErasureCodePyramid::layers_init(unsigned int description_index,
+				    const string &mapping,
+				    unsigned int divisor,
+				    Layer *layer)
 {
-  data_chunk_count = layers.back().erasure_code->get_data_chunk_count();
-  chunk_count = layers.back().parameters["mapping"].size();
-  for (list<Layer>::iterator layer = layers.begin();
-       layer != layers.end();
-       layer++) {
-    string &mapping = layer->parameters["mapping"];
-    layer->mapping = mapping.c_str();
-    layer->mapping_length = mapping.size();
-    if (layer->parameters.count("size")) {
-      std::string err;
-      int size = strict_strtol(layer->parameters["size"].c_str(), 10, &err);
-      if (!err.empty()) {
-	*ss << "could not convert size because " << err;
-	return ERROR_PYRAMID_INT;
-      }
-      layer->size = size;
-    } else {
-      layer->size = 1;
+  Description &description = descriptions[description_index];
+  layer->mapping = mapping;
+
+  unsigned int next_index = description_index + 1;
+  if (next_index < descriptions.size()) {
+    Description &next = descriptions[next_index];
+    const string &next_mapping = next.parameters["mapping"];
+    divisor *= next.size;
+    int width = next_mapping.size() / divisor;
+    for (unsigned int i = 0; i < next.size; i++) {
+      Layer next_layer;
+      string sub_mapping = next_mapping.substr(i * width, width);
+      int r = layers_init(next_index, sub_mapping, divisor, &next_layer);
+      if (r)
+	return r;
+      layer->layers.push_back(next_layer);
     }
   }
-  return 0;
+  
+  ErasureCodePluginRegistry &registry = ErasureCodePluginRegistry::instance();
+  description.parameters["erasure-code-directory"] = directory;
+  return registry.factory(description.parameters["erasure-code-plugin"],
+			  description.parameters,
+			  &layer->erasure_code);
 }
 
 int ErasureCodePyramid::layers_sanity_checks(string description_string,
 					     ostream *ss) const
 {
-  if (layers.size() < 2) {
-    *ss << "at least two layers must be defined, " << layers.size()
-       << " were found in " << description_string;
-    return ERROR_PYRAMID_TWO_LAYERS;
+  if (descriptions[0].parameters.count("mapping") == 0) {
+    *ss << "mapping is missing from the top first layer of the pyramid "
+	<< description_string;
+    return ERROR_PYRAMID_FIRST_MAPPING;
   }
+  const string &first_mapping = descriptions[0].parameters.find("mapping")->second;
 
-  {
-    const string &first_mapping =
-      layers.front().parameters.find("mapping")->second;
-    int level = 1;
-    for (list<Layer>::const_iterator layer = layers.begin();
-	 layer != layers.end();
-	 layer++, level++) {
-      const string &mapping = layer->parameters.find("mapping")->second;
-      if (first_mapping.size() != mapping.size()) {
-	*ss << "layer " << level << " has mapping='" << mapping << "'"
-	   << " which must be of the same size as the mapping of the "
-	   << " first layer ('" << first_mapping << "')";
-	return ERROR_PYRAMID_MAPPING_SIZE;
-      }
+  for (unsigned int i = 0; i < descriptions.size(); i++) {
+    const Description description = descriptions[i];
+    const string &mapping = description.parameters.find("mapping")->second;
+    if (mapping.size() != first_mapping.size()) {
+      *ss << "layer " << i << " has mapping='" << mapping << "'"
+	  << " which must be of the same size as the mapping of the "
+	  << " first layer ('" << first_mapping << "')";
+      return ERROR_PYRAMID_MAPPING_SIZE;
+    }
+    if (description.parameters.count("erasure-code-plugin") == 0) {
+      *ss << "layer " << i << " is missing \"erasure-code-plugin\" in " 
+	  << description_string;
+      return ERROR_PYRAMID_PLUGIN;
     }
   }
 
-  {   
-    list<Layer>::const_iterator lower = layers.begin();
-    list<Layer>::const_iterator upper = layers.begin();
-    int level = 0;
-    list<string> fields;
-    fields.push_back("mapping");
-    fields.push_back("size");
-    fields.push_back("type");
-    for (++upper; upper != layers.end(); ++upper, ++lower, ++level) {
-      for (list<string>::iterator field = fields.begin();
-	   field != fields.end();
-	   field++) {
-	if (lower->parameters.count(*field) == 0) {
-	  *ss << "layer " << level << " in " << description_string
-	      << " is missing the mandatory field " << *field;
-	  return ERROR_PYRAMID_MISSING_FIELD;
-	}
-      }
-      if (chunk_count % lower->erasure_code->get_chunk_count()) {
-	*ss << "layer " << level << " has "
-	   << lower->erasure_code->get_chunk_count() << " chunks"
-	   << " which is not a multiple of " << chunk_count << ","
-	   << " the total number of chunks all layers included";
-	return ERROR_PYRAMID_COUNT_CONSTRAINT;
-      }
-    }
-  }
+  layer_sanity_checks(description_string, layer, 0, ss);
 
+  return 0;
+}
+
+int ErasureCodePyramid::layer_sanity_checks(string description_string,
+					    const Layer &layer,
+					    int level,
+					    ostream *ss) const
+{
+  if (layer.layers.size() <= 0)
+    return 0;
+
+  int expected = layer.layers[0].erasure_code->get_chunk_count();
+  bool mismatch = false;
+  for (unsigned int i = 0; i < layer.layers.size(); i++) {
+    int count = 0;
+    for (unsigned int j = 0; j < layer.layers[i].mapping.size(); j++)
+      if (layer.layers[i].mapping[j] != '-')
+	count++;
+    if (count != expected)
+      mismatch = true;
+  }
+  if (mismatch) {
+    *ss << "at layer " << level << ", mappings are expected to have exactly "
+	<< expected << " chunks, but the count is different: "
+	<< "The dash (-) char means no chunk, any other char is a chunk.\n";
+    for (unsigned int i = 0; i < layer.layers.size(); i++) {
+      int count = 0;
+      for (unsigned int j = 0; j < layer.layers[i].mapping.size(); j++)
+	if (layer.layers[i].mapping[j] != '-')
+	  count++;
+      *ss << layer.layers[i].mapping << " has " << count << " chunks\n";
+    }
+    return ERROR_PYRAMID_COUNT_CONSTRAINT;
+  }
+  for (unsigned int i = 0; i < layer.layers.size(); i++) {
+    int r = layer_sanity_checks(description_string, layer.layers[i],
+				level + 1, ss);
+    if (r)
+      return r;
+  }
+  
   return 0;
 }
 
@@ -301,90 +326,38 @@ int ErasureCodePyramid::init(const map<std::string,std::string> &parameters,
 
   dout(10) << "init(" << description_string << ")" << dendl;
 
+  list<Layer> layers;
   r = layers_parse(description_string, description, ss);
   if (r)
     return r;
 
-  r = layers_init(description_string, ss);
+  const string &mapping = descriptions[0].parameters["mapping"];
+  r = layers_init(0, mapping, 1, &layer);
   if (r)
     return r;
+  data_chunk_count = layer.erasure_code->get_data_chunk_count();
+  chunk_count = mapping.size();
 
   return layers_sanity_checks(description_string, ss);
 }
 
-#if 0
-int ErasureCodePyramid::add_crush_step(json_spirit::mValue json,
-				       ostream *ss)
-{
-  if (json.type() != json_spirit::array_type) {
-    ss << str << " must be a JSON array but is of type "
-       << json.type() << " instead";
-    return -EINVAL;
-  }
-
-  vector<json_spirit::mValue>::iterator i = json.begin();
-  if (i->type() != json_spirit::int_type)
-    return EINVAL;
-  int count = i->get_int();
-
-  ++i;
-  if (i->type() != json_spirit::str_type)
-    return EINVAL;
-  int type = i->get_str();
-
-  crush_steps[type] = count;
-
-  return 0;
-}
-#endif
-
 unsigned int ErasureCodePyramid::get_chunk_size(unsigned int object_size) const
 {
-  list<Layer>::const_reverse_iterator i = layers.rbegin();
-  unsigned int chunk_size = i->erasure_code->get_chunk_size(object_size);
+  unsigned int chunk_size = layer.erasure_code->get_chunk_size(object_size);
   unsigned int padded_size = data_chunk_count * chunk_size;
-  for (++i; i != layers.rend(); i++) {
-    assert(padded_size % i->size == 0);
-    padded_size /= i->size;
-    assert(chunk_size == i->erasure_code->get_chunk_size(padded_size));
+    
+  for (const Layer *lower = &layer;
+       lower->layers.size() > 0;
+       lower = &(lower->layers[0])) {
+    assert(padded_size % lower->layers.size() == 0);
+    padded_size /= lower->layers.size();
+    assert(chunk_size == lower->erasure_code->get_chunk_size(padded_size));
   }
   return chunk_size;
 }
 
-int ErasureCodePyramid::minimum_to_decode(const set<int> &want_to_read,
-                                           const set<int> &available_chunks,
-                                           set<int> *minimum) 
-{
-  if (includes(available_chunks.begin(), available_chunks.end(),
-	       want_to_read.begin(), want_to_read.end())) {
-    *minimum = want_to_read;
-  } else {
-#if 0
-    if (available_chunks.size() < (unsigned)k)
-      return -EIO;
-    set<int>::iterator i;
-    unsigned j;
-    for (i = available_chunks.begin(), j = 0; j < (unsigned)k; ++i, j++)
-      minimum->insert(*i);
-#endif
-  }
-  return 0;
-}
-
-int ErasureCodePyramid::minimum_to_decode_with_cost(const set<int> &want_to_read,
-                                                     const map<int, int> &available,
-                                                     set<int> *minimum)
-{
-  set <int> available_chunks;
-  for (map<int, int>::const_iterator i = available.begin();
-       i != available.end();
-       ++i)
-    available_chunks.insert(i->first);
-  return minimum_to_decode(want_to_read, available_chunks, minimum);
-}
-
-int ErasureCodePyramid::layer_encode(Layer layer,
-				     list<bufferlist> &chunks)
+int ErasureCodePyramid::layer_encode(Layer &layer,
+				     vector<bufferlist> &chunks)
 {
   // Call the encoding function by remapping data + coding chunks so
   // that coding chunks follow data chunks without gaps in between.
@@ -394,34 +367,33 @@ int ErasureCodePyramid::layer_encode(Layer layer,
 
   const char *mapping = layer.mapping.c_str();
   unsigned int mapping_length = layer.mapping.size();
-  list<bufferlist> data;
-  list<bufferlist> coding;
+  vector<bufferlist> data;
+  vector<bufferlist> coding;
   for (unsigned int i = 0; i < mapping_length; i++) {
     switch (mapping[i]) {
     case '^':
-      data.push_back(chunks[i]);
+      coding.push_back(chunks[i]);
       break;
     case '-':
       break;
     default:
-      coding.push_back(chunks[i]);
+      data.push_back(chunks[i]);
       break;
     } 
   }
-  list<bufferlist> layer_chunks = data + coding;
-  int r = layer.erasure_code->encode(layer_chunks);
+  vector<bufferlist> layer_chunks = data;
+  layer_chunks.insert(layer_chunks.end(), coding.begin(), coding.end());
+  int r = layer.erasure_code->encode_chunks(layer_chunks);
   if (r)
     return r;
 
-  for (list<Layer>::iterator layer = layer.layers.begin();
-       layer != layer.layers.end();
-       ++layer) {
-    list<bufferlist> local_chunks;
-    for (unsigned int j = 0; j < layer->mapping.size(); j++) {
-      local_chunks.push_back(chunks.front());
-      chunks.pop_front();
-    }
-    r = layer_encode(layer, local_chunks);
+  for (unsigned int i = 0; i < layer.layers.size(); i++) {
+    Layer &lower = layer.layers[i];
+    unsigned int width = lower.mapping.size();
+    vector<bufferlist> lower_chunks;
+    for (unsigned int j = i * width; j < (i + 1) * width; j++)
+      lower_chunks.push_back(chunks[j]);
+    r = layer_encode(lower, lower_chunks);
     if (r)
       return r;
   }
@@ -429,155 +401,160 @@ int ErasureCodePyramid::layer_encode(Layer layer,
   return 0;
 }
 
-int ErasureCodePyramid::encode(list<bufferlist> &chunks)
+int ErasureCodePyramid::encode_chunks(vector<bufferlist> &chunks)
 {
-  return layer_encode(layers, layers.back()->mapping, chunks);
+  return layer_encode(layer, chunks);
+}
+
+int ErasureCodePyramid::encode(const set<int> &want_to_encode,
+			       const bufferlist &in,
+			       map<int, bufferlist> *encoded)
+{
+  unsigned blocksize = get_chunk_size(in.length());
+  unsigned int k = get_data_chunk_count();
+  unsigned int m = get_chunk_count() - k;
+  unsigned padded_length = blocksize * k;
+  bufferlist out(in);
+  if (padded_length - in.length() > 0) {
+    dout(10) << "encode adjusted buffer length from " << in.length()
+	     << " to " << padded_length << dendl;
+    bufferptr pad(padded_length - in.length());
+    pad.zero();
+    out.push_back(pad);
+    out.rebuild_page_aligned();
+  }
+  unsigned coding_length = blocksize * m;
+  bufferptr coding(buffer::create_page_aligned(coding_length));
+  out.push_back(coding);
+  vector<bufferlist> chunks;
+  unsigned int k_index = 0;
+  unsigned int m_index = 0;
+  const string &mapping = layer.mapping;
+  assert(k + m == mapping.size());
+  for (unsigned int i = 0; i < k + m; i++) {
+    bufferlist &chunk = (*encoded)[i];
+    switch (mapping[i]) {
+    case '^':
+    case '-':
+      chunk.substr_of(out, (k + m_index++) * blocksize, blocksize);
+      break;
+    default:
+      chunk.substr_of(out, k_index++ * blocksize, blocksize);
+      break;
+    }
+    chunks.push_back(chunk);
+  }
+  assert(k_index + m_index == k + m);
+  encode_chunks(chunks);
+  for (unsigned int i = 0; i < k + m; i++)
+    if (want_to_encode.count(i) == 0)
+      encoded->erase(i);
+  return 0;
 }
 
 int ErasureCodePyramid::layer_decode(Layer &layer,
-				     list<bool> *erasures,
-				     list<bufferlist> &chunks)
+				     vector<bool> *erasures,
+				     vector<bufferlist> &chunks)
 {
-  list<bufferlist> global_chunks = chunks;
-  list<bool> global_erasures = *erasures;
-  erasures.clear();
-  for (list<Layer>::iterator layer = layer.layers.begin();
-       layer != layer.layers.end();
-       ++layer) {
-    list<bufferlist> local_chunks;
-    list<bool> local_erasures;
-    for (unsigned int j = 0; j < layer->mapping.size(); j++) {
-      local_chunks.push_back(global_chunks.front());
-      global_chunks.pop_front();
-      local_erasures.push_back(global_erasures->front());
-      global_erasures.pop_front();
+  bool has_erasures = false;
+  unsigned int mapping_length = layer.mapping.size();
+  for (unsigned int i = 0; i < mapping_length; i++) {
+    if ((*erasures)[i]) {
+      has_erasures = true;
+      break;
     }
-    r = layer_decode(layer, &local_erasures, local_chunks);
+  }
+      
+  if (!has_erasures)
+    return 0;
+
+  for (unsigned int i = 0; i < layer.layers.size(); i++) {
+    vector<bufferlist> lower_chunks;
+    vector<bool> lower_erasures;
+    unsigned int mapping_length = layer.layers[i].mapping.size();
+    for (unsigned int j = 0; j < mapping_length; j++) {
+      lower_chunks.push_back(chunks[i * mapping_length + j]);
+      lower_erasures.push_back((*erasures)[i * mapping_length + j]);
+    }
+    int r = layer_decode(layer.layers[i], &lower_erasures, lower_chunks);
     if (r && r != -EIO)
       return r;
-    *erasures += local_erasures;
+    if (r == -EIO)
+      has_erasures = true;
+    else
+      for (unsigned int j = 0; j < mapping_length; j++)
+	(*erasures)[i * mapping_length + j] = lower_erasures[j];
   }
 
-  
+  if (!has_erasures)
+    return 0;
+
   const char *mapping = layer.mapping.c_str();
-  unsigned int mapping_length = layer.mapping.size();
-  list<bufferlist> data;
-  list<bufferlist> coding;
-  unsigned int chunk_index;
+  vector<bool> layer_erasures;
+  vector<bufferlist> data;
+  vector<bufferlist> coding;
   for (unsigned int i = 0; i < mapping_length; i++) {
     switch (mapping[i]) {
     case '^':
-      data.push_back(chunks[i]);
+      coding.push_back(chunks[i]);
       layer_erasures.push_back((*erasures)[i]);
       break;
     case '-':
       break;
     default:
-      coding.push_back(chunks[i]);
+      data.push_back(chunks[i]);
       layer_erasures.push_back((*erasures)[i]);
       break;
     } 
   }
-  list<bufferlist> layer_chunks = data + coding;
-  int r = layer.erasure_code->encode(layer_erasures, layer_chunks);
+  vector<bufferlist> layer_chunks = data;
+  layer_chunks.insert(layer_chunks.end(), coding.begin(), coding.end());
+  int r = layer.erasure_code->decode_chunks(layer_erasures, layer_chunks);
   if (r)
     return r;
-  erasures->clear();
-  for (unsigned int i = 0; i < mapping_length; i++) {
-    if (mapping[i] != '-') {
-      erasures[i] = layer_erasures.front();
-      layer_erasures.pop_front();
-    }
-  }
+  for (unsigned int i = 0; i < mapping_length; i++)
+    if (mapping[i] != '-')
+      (*erasures)[i] = false;
 
   return 0;
 }
 
-int ErasureCodePyramid::decode(const set<int> &want_to_read,
-                                const map<int, bufferlist> &chunks,
-                                map<int, bufferlist> *decoded)
+int ErasureCodePyramid::decode_chunks(vector<bool> erasures,
+				      vector<bufferlist> &chunks)
 {
-  // TODO: to save some computation, if all chunks are available,
-  // don't bother to iterate from local to global, just decode at the
-  // global level
-
-  unsigned blocksize = chunks.begin()->second.length();
-  unsigned int chunk_count = get_chunk_count();
-  for (unsigned int i = 0; i < chunk_count; i++) {
-    if (chunks.count(i) == 0) {
-      bufferptr ptr(buffer::create_page_aligned(blocksize));
-      (*decoded)[i].push_front(ptr);
-    } else {
-      (*decoded)[i] = chunks.find(i)->second;
-    }
-  }
-
-  set<int> left_to_read = want_to_read;
-  for (list<Layer>::iterator layer = layers.begin();
-       layer != layers.end() && !left_to_read.empty();
-       layer++) {
-    bool do_decode = false;
-    unsigned int chunk_count = layer->erasure_code->get_chunk_count();
-    const char *mapping = layer->mapping;
-    unsigned int mapping_length = layer->mapping_length;
-    unsigned int i = 0;
-    do {
-      bufferlist local_data;
-      map<int, bufferlist> local_chunks;
-      map<int, bufferlist> local_decoded;
-      set<int> local_want_to_read;
-      set<int> global_want_to_read;
-      set<int> available;
-      unsigned int chunk_index = 0;
-      for ( ; chunk_index < chunk_count && i < mapping_length ; i++) {
-	if (mapping[i] != '-') {
-	  if (chunks.count(i) != 0) {
-	    local_chunks[chunk_index] = chunks.find(i)->second;
-	    available.insert(chunk_index);
-	  }
-	  local_decoded[chunk_index] = decoded->find(i)->second;
-	}
-
-	if (want_to_read.count(i) != 0) {
-	  do_decode = true;
-	  local_want_to_read.insert(chunk_index);
-	  global_want_to_read.insert(i);
-	}
-	chunk_index++;
-      }
-
-      if (do_decode) {
-	map<int, bufferlist> decoded;
-	set<int> minimum;
-	int r;
-	r = layer->erasure_code->minimum_to_decode(local_want_to_read,
-						   available,
-						   &minimum);
-	if (r && r != -EIO)
-	  return r;
-
-	// silently ignore when there are not enough chunks to repair,
-	// hoping it will be resolved in an upper layer
-	if (r != -EIO) {
-	  r = layer->erasure_code->decode(local_want_to_read,
-					  local_chunks,
-					  &local_decoded);
-	  if (r)
-	    return r;
-	
-	  for (set<int>::iterator i = global_want_to_read.begin();
-	       i != global_want_to_read.end();
-	       i++)
-	    left_to_read.erase(*i);
-	}
-      }
-    } while(i < mapping_length);
-  }
-
-  if (!left_to_read.empty())
-    return -EIO;
-  else
-    return 0;
+  return layer_decode(layer, &erasures, chunks);
 }
 
+int ErasureCodePyramid::decode(const set<int> &want_to_read,
+			       const map<int, bufferlist> &chunks,
+			       map<int, bufferlist> *decoded)
+{
+  unsigned int k = get_data_chunk_count();
+  unsigned int m = get_chunk_count() - k;
+  unsigned blocksize = chunks.begin()->second.length();
+  vector<bufferlist> buffers;
+  vector<bool> erasures;
+  for (unsigned int i =  0; i < k + m; i++) {
+    if (chunks.find(i) == chunks.end()) {
+      erasures.push_back(true);
+      if (decoded->find(i) == decoded->end() ||
+	  decoded->find(i)->second.length() != blocksize) {
+	bufferptr ptr(buffer::create_page_aligned(blocksize));
+	(*decoded)[i].push_front(ptr);
+      }
+    } else {
+      erasures.push_back(false);
+      (*decoded)[i] = chunks.find(i)->second;
+    }
+    buffers.push_back((*decoded)[i]);
+  }
 
+  int r = decode_chunks(erasures, buffers);
+  if (r)
+    return r;
+
+  for (unsigned int i = 0; i < k + m; i++)
+    if (want_to_read.count(i) == 0)
+      decoded->erase(i);
+  return 0;
+}

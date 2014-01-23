@@ -52,74 +52,12 @@ unsigned int ErasureCodeJerasure::get_chunk_size(unsigned int object_size) const
   return padded_length / k;
 }
 
-int ErasureCodeJerasure::minimum_to_decode(const set<int> &want_to_read,
-                                           const set<int> &available_chunks,
-                                           set<int> *minimum) 
-{
-  if (includes(available_chunks.begin(), available_chunks.end(),
-	       want_to_read.begin(), want_to_read.end())) {
-    *minimum = want_to_read;
-  } else {
-    if (available_chunks.size() < (unsigned)k)
-      return -EIO;
-    set<int>::iterator i;
-    unsigned j;
-    for (i = available_chunks.begin(), j = 0; j < (unsigned)k; ++i, j++)
-      minimum->insert(*i);
-  }
-  return 0;
-}
-
-int ErasureCodeJerasure::minimum_to_decode_with_cost(const set<int> &want_to_read,
-                                                     const map<int, int> &available,
-                                                     set<int> *minimum)
-{
-  set <int> available_chunks;
-  for (map<int, int>::const_iterator i = available.begin();
-       i != available.end();
-       ++i)
-    available_chunks.insert(i->first);
-  return minimum_to_decode(want_to_read, available_chunks, minimum);
-}
-
-int ErasureCodeJerasure::encode(const set<int> &want_to_encode,
-                                const bufferlist &in,
-                                map<int, bufferlist> *encoded)
-{
-  unsigned blocksize = get_chunk_size(in.length());
-  unsigned padded_length = blocksize * k;
-  bufferlist out(in);
-  if (padded_length - in.length() > 0) {
-    dout(10) << "encode adjusted buffer length from " << in.length()
-	     << " to " << padded_length << dendl;
-    bufferptr pad(padded_length - in.length());
-    pad.zero();
-    out.push_back(pad);
-    out.rebuild_page_aligned();
-  }
-  unsigned coding_length = blocksize * m;
-  bufferptr coding(buffer::create_page_aligned(coding_length));
-  out.push_back(coding);
-  list<bufferlist> chunks;
-  for (int i = 0; i < k + m; i++) {
-    bufferlist &chunk = (*encoded)[i];
-    chunk.substr_of(out, i * blocksize, blocksize);
-    chunks.push_back(chunk);
-  }
-  encode(chunks);
-  for (int i = 0; i < k + m; i++) {
-    if (want_to_encode.count(i) == 0)
-      encoded->erase(i);
-  }
-  return 0;
-}
-
-int ErasureCodeJerasure::encode(list<bufferlist> &chunks)
+int ErasureCodeJerasure::encode_chunks(vector<bufferlist> &chunks)
 {
   assert(chunks.size() == (unsigned int)(k + m));
   char *buffers[k + m];
   unsigned int i = 0;
-  for (list<bufferlist>::iterator chunk = chunks.begin();
+  for (vector<bufferlist>::iterator chunk = chunks.begin();
        chunk != chunks.end();
        chunk++, i++)
     buffers[i] = chunk->c_str();
@@ -127,32 +65,8 @@ int ErasureCodeJerasure::encode(list<bufferlist> &chunks)
   return 0;
 }
 
-int ErasureCodeJerasure::decode(const set<int> &want_to_read,
-                                const map<int, bufferlist> &chunks,
-                                map<int, bufferlist> *decoded)
-{
-  unsigned blocksize = chunks.begin()->second.length();
-  list<bufferlist> buffers;
-  list<bool> erasures;
-  for (int i =  0; i < k + m; i++) {
-    if (chunks.find(i) == chunks.end()) {
-      erasures.push_back(true);
-      if (decoded->find(i) == decoded->end() ||
-	  decoded->find(i)->second.length() != blocksize) {
-	bufferptr ptr(buffer::create_page_aligned(blocksize));
-	(*decoded)[i].push_front(ptr);
-      }
-    } else {
-      erasures.push_back(false);
-      (*decoded)[i] = chunks.find(i)->second;
-    }
-    buffers.push_back((*decoded)[i]);
-  }
-
-  return decode(erasures, buffers);
-}
-
-int ErasureCodeJerasure::decode(list<bool> erasures, list<bufferlist> &chunks)
+int ErasureCodeJerasure::decode_chunks(vector<bool> erasures,
+				       vector<bufferlist> &chunks)
 {
   int e[k + m + 1];
   int e_count = 0;
@@ -160,17 +74,13 @@ int ErasureCodeJerasure::decode(list<bool> erasures, list<bufferlist> &chunks)
   char *data[k];
   char *coding[m];
 
-  int i = 0;
-  for (list<bufferlist>::iterator chunk = chunks.begin();
-       chunk != chunks.end();
-       chunk++, i++) {
-    if (i < k)
-      data[i] = chunk->c_str();
+  for (unsigned int i = 0; i < chunks.size(); i++) {
+    if (i < (unsigned int)k)
+      data[i] = chunks[i].c_str();
     else
-      coding[i - k] = chunk->c_str();
-    if (erasures.front())
+      coding[i - k] = chunks[i].c_str();
+    if (erasures[i])
       e[e_count++] = i;
-    erasures.pop_front();
   }
   e[e_count] = -1;
   if (e_count > 0)
