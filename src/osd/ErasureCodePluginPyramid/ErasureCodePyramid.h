@@ -80,11 +80,12 @@ public:
 		     map<int, bufferlist> *encoded);
 
   int layer_decode(const Layer &layer,
-		   vector<bool> *erasures,
-		   vector<bufferlist> &chunks);
+				     const set<int> &want,
+				     const set<int> &available,
+		   map<int, bufferlist> *decoded) const;
 
   virtual int decode_chunks(vector<bool> erasures,
-			    vector<bufferlist> &chunks);
+			    vector<bufferlist> &chunks) { return 0; }
 
   virtual int decode(const set<int> &want_to_read,
 		     const map<int, bufferlist> &chunks,

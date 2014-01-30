@@ -40,6 +40,7 @@ TEST(ErasureCodePlugin, factory)
     "      \"erasure-code-k\": \"6\","
     "      \"erasure-code-m\": \"1\","
     "      \"type\": \"datacenter\","
+    "      \"size\": 3,"
     "      \"mapping\": \"000000^111111^222222^\","
     "    },"
     "]";

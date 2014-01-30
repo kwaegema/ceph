@@ -440,125 +440,118 @@ int ErasureCodePyramid::encode(const set<int> &want_to_encode,
 }
 
 int ErasureCodePyramid::layer_decode(const Layer &layer,
-				     vector<bool> *erasures,
-				     vector<bufferlist> &chunks)
+				     const set<int> &want,
+				     const set<int> &available,
+				     map<int, bufferlist> *decoded) const
 {
-  bool has_erasures = false;
+  bool has_erasures = !includes(available.begin(), available.end(),
+				want.begin(), want.end());
+
+  if (!has_erasures)
+    return 0;
+
+  if (layer.layers.size() > 0) {
+    has_erasures = false;
+
+    for (unsigned int i = 0; i < layer.layers.size(); i++) {
+      unsigned int mapping_length = layer.layers[i].mapping.size();
+      set<int> lower_want;
+      set<int> lower_available;
+      map<int, bufferlist> lower_decoded;
+      for (unsigned int j = 0; j < mapping_length; j++) {
+	if (want.find(i * mapping_length + j) != want.end())
+	  lower_want.insert(j);
+	if (available.find(i * mapping_length + j) != available.end())
+	  lower_available.insert(j);
+	if (decoded->find(i * mapping_length + j) != decoded->end())
+	  lower_decoded[j] = (*decoded)[i * mapping_length + j];
+      }
+      int r = layer_decode(layer.layers[i],
+			   lower_want,
+			   lower_available,
+			   &lower_decoded);
+      if (r && r != -EIO)
+	return r;
+      if (r == -EIO)
+	has_erasures = true;
+    }
+  }
+
+  if (!has_erasures)
+    return 0;
+
   unsigned int mapping_length = layer.mapping.size();
-  for (unsigned int i = 0; i < mapping_length; i++) {
-    if ((*erasures)[i]) {
-      has_erasures = true;
-      break;
-    }
-  }
-
-  if (!has_erasures)
-    return 0;
-
-  for (unsigned int i = 0; i < layer.layers.size(); i++) {
-    vector<bufferlist> lower_chunks;
-    vector<bool> lower_erasures;
-    unsigned int mapping_length = layer.layers[i].mapping.size();
-    for (unsigned int j = 0; j < mapping_length; j++) {
-      lower_chunks.push_back(chunks[i * mapping_length + j]);
-      lower_erasures.push_back((*erasures)[i * mapping_length + j]);
-    }
-    int r = layer_decode(layer.layers[i], &lower_erasures, lower_chunks);
-    if (r && r != -EIO)
-      return r;
-    if (r == -EIO)
-      has_erasures = true;
-    else
-      for (unsigned int j = 0; j < mapping_length; j++)
-	(*erasures)[i * mapping_length + j] = lower_erasures[j];
-  }
-
-  if (!has_erasures)
-    return 0;
-
   const char *mapping = layer.mapping.c_str();
-  vector<bool> layer_erasures;
-  vector<bufferlist> data;
-  vector<bufferlist> coding;
-  set<int> available;
-  set<int> want_to_read;
-  for (unsigned int i = 0; i < mapping_length; i++) {
-    want_to_read.insert(i);
-    switch (mapping[i]) {
-    case '^':
-      coding.push_back(chunks[i]);
-      layer_erasures.push_back((*erasures)[i]);
-      if (!layer_erasures.back())
-	available.insert(i);
-      break;
-    case '-':
-      break;
-    default:
-      data.push_back(chunks[i]);
-      layer_erasures.push_back((*erasures)[i]);
-      if (!layer_erasures.back())
-	available.insert(i);
-      break;
+  set<int> layer_want;
+  map<int, bufferlist> layer_decoded;
+  map<int, bufferlist> layer_chunks;
+  unsigned int k = layer.erasure_code->get_data_chunk_count();
+  {
+    unsigned int k_index = 0;
+    unsigned int m_index = 0;
+    for (unsigned int i = 0; i < mapping_length; i++) {
+      switch (mapping[i]) {
+      case '-':
+	break;
+      case '^':
+	if (want.find(i) != want.end())
+	  layer_want.insert(k + m_index);
+	if (available.find(i) != available.end())
+	  layer_chunks[k + m_index] = (*decoded)[i];
+	else
+	  layer_decoded[k + m_index] = (*decoded)[i];
+	m_index++;
+	break;
+      default:
+	if (want.find(i) != want.end())
+	  layer_want.insert(k_index);
+	if (available.find(i) != available.end())
+	  layer_chunks[k_index] = (*decoded)[i];
+	else
+	  layer_decoded[k_index] = (*decoded)[i];
+	k_index++;
+	break;
+      }
     }
   }
-
-  set<int> minimum;
-  int r = layer.erasure_code->minimum_to_decode(want_to_read,
-						available,
-						&minimum);
-  if (r && r != -EIO)
+  int r = layer.erasure_code->decode(layer_want,
+				     layer_chunks,
+				     &layer_decoded);
+  if (r)
     return r;
 
-  if (r != -EIO) {
-    vector<bufferlist> layer_chunks = data;
-    layer_chunks.insert(layer_chunks.end(), coding.begin(), coding.end());
-    int r = layer.erasure_code->decode_chunks(layer_erasures, layer_chunks);
-    if (r)
-      return r;
-    for (unsigned int i = 0; i < mapping_length; i++)
-      if (mapping[i] != '-')
-	(*erasures)[i] = false;
-  }
-
-  return r;
-}
-
-int ErasureCodePyramid::decode_chunks(vector<bool> erasures,
-				      vector<bufferlist> &chunks)
-{
-  return layer_decode(layer, &erasures, chunks);
+  return 0;
 }
 
 int ErasureCodePyramid::decode(const set<int> &want_to_read,
 			       const map<int, bufferlist> &chunks,
 			       map<int, bufferlist> *decoded)
 {
-  unsigned int k = get_data_chunk_count();
-  unsigned int m = get_chunk_count() - k;
   unsigned int blocksize = chunks.begin()->second.length();
   vector<bufferlist> buffers;
   vector<bool> erasures;
-  for (unsigned int i =  0; i < k + m; i++) {
-    if (chunks.find(i) == chunks.end()) {
-      erasures.push_back(true);
-      if (decoded->find(i) == decoded->end() ||
-	  decoded->find(i)->second.length() != blocksize) {
-	bufferptr ptr(buffer::create_page_aligned(blocksize));
-	(*decoded)[i].push_front(ptr);
-      }
-    } else {
-      erasures.push_back(false);
-      (*decoded)[i] = chunks.find(i)->second;
-    }
-    buffers.push_back((*decoded)[i]);
-  }
 
-  int r = decode_chunks(erasures, buffers);
+  set<int> available_chunks;
+  for (map<int, bufferlist>::const_iterator i = chunks.begin();
+       i != chunks.end();
+       i++)
+    available_chunks.insert(i->first);
+  set<int> minimum;
+  int r = minimum_to_decode(want_to_read, available_chunks, &minimum);
   if (r)
     return r;
 
-  for (unsigned int i = 0; i < k + m; i++)
-    if (want_to_read.count(i) == 0)
-      decoded->erase(i);
-  return 0;
+  for (set<int>::iterator i = minimum.begin(); i != minimum.end(); i++) {
+    if (chunks.find(*i) == chunks.end()) {
+      if (decoded->find(*i) == decoded->end() ||
+	  decoded->find(*i)->second.length() != blocksize) {
+	bufferptr ptr(buffer::create_page_aligned(blocksize));
+	(*decoded)[*i].push_front(ptr);
+      }
+    } else {
+      (*decoded)[*i] = chunks.find(*i)->second;
+    }
+  }
+
+  return layer_decode(layer, want_to_read, available_chunks, decoded);
 }
