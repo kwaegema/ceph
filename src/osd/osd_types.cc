@@ -781,14 +781,7 @@ void pg_pool_t::dump(Formatter *f) const
 		   cache_target_full_ratio_micro);
   f->dump_unsigned("cache_min_flush_age", cache_min_flush_age);
   f->dump_unsigned("cache_min_evict_age", cache_min_evict_age);
-  f->open_object_section("properties");
-  for (map<string,string>::const_iterator i = properties.begin();
-       i != properties.end();
-       ++i) {
-    string name = i->first;
-    f->dump_string(name.c_str(), i->second);
-  }
-  f->close_section();
+  f->dump_string("properties", properties);
   f->open_object_section("hit_set_params");
   hit_set_params.dump(f);
   f->close_section(); // hit_set_params
@@ -1228,8 +1221,7 @@ void pg_pool_t::generate_test_instances(list<pg_pool_t*>& o)
   a.cache_mode = CACHEMODE_WRITEBACK;
   a.read_tier = 1;
   a.write_tier = 1;
-  a.properties["p-1"] = "v-1";
-  a.properties["empty"] = string();
+  a.properties = "name in osdmap";
   a.hit_set_params = HitSet::Params(new BloomHitSet::Params);
   a.hit_set_period = 3600;
   a.hit_set_count = 8;

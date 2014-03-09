@@ -388,7 +388,7 @@ void OSDMap::Incremental::encode(bufferlist& bl, uint64_t features) const
   ENCODE_START(7, 7, bl);
 
   {
-    ENCODE_START(2, 1, bl); // client-usable data
+    ENCODE_START(3, 1, bl); // client-usable data
     ::encode(fsid, bl);
     ::encode(epoch, bl);
     ::encode(modified, bl);
@@ -407,6 +407,7 @@ void OSDMap::Incremental::encode(bufferlist& bl, uint64_t features) const
     ::encode(new_pg_temp, bl);
     ::encode(new_primary_temp, bl);
     ::encode(new_primary_affinity, bl);
+    ::encode(new_properties, bl);
     ENCODE_FINISH(bl); // client-usable data
   }
 
@@ -542,7 +543,7 @@ void OSDMap::Incremental::decode(bufferlist::iterator& bl)
     return;
   }
   {
-    DECODE_START(2, bl); // client-usable data
+    DECODE_START(3, bl); // client-usable data
     ::decode(fsid, bl);
     ::decode(epoch, bl);
     ::decode(modified, bl);
@@ -564,6 +565,10 @@ void OSDMap::Incremental::decode(bufferlist::iterator& bl)
       ::decode(new_primary_affinity, bl);
     else
       new_primary_affinity.clear();
+    if (struct_v >= 3)
+      ::decode(new_properties, bl);
+    else
+      new_properties.clear();
     DECODE_FINISH(bl); // client-usable data
   }
 
@@ -1725,7 +1730,7 @@ void OSDMap::encode(bufferlist& bl, uint64_t features) const
   ENCODE_START(7, 7, bl);
 
   {
-    ENCODE_START(2, 1, bl); // client-usable data
+    ENCODE_START(3, 1, bl); // client-usable data
     // base
     ::encode(fsid, bl);
     ::encode(epoch, bl);
@@ -1756,6 +1761,7 @@ void OSDMap::encode(bufferlist& bl, uint64_t features) const
     bufferlist cbl;
     crush->encode(cbl);
     ::encode(cbl, bl);
+    ::encode(properties, bl);
     ENCODE_FINISH(bl); // client-usable data
   }
 
@@ -1913,7 +1919,7 @@ void OSDMap::decode(bufferlist::iterator& bl)
    * Since we made it past that hurdle, we can use our normal paths.
    */
   {
-    DECODE_START(2, bl); // client-usable data
+    DECODE_START(3, bl); // client-usable data
     // base
     ::decode(fsid, bl);
     ::decode(epoch, bl);
@@ -1947,6 +1953,11 @@ void OSDMap::decode(bufferlist::iterator& bl)
     ::decode(cbl, bl);
     bufferlist::iterator cblp = cbl.begin();
     crush->decode(cblp);
+    if (struct_v >= 3) {
+      ::decode(properties, bl);
+    } else {
+      properties.clear();
+    }
     DECODE_FINISH(bl); // client-usable data
   }
 

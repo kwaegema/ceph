@@ -2767,20 +2767,25 @@ int OSDMonitor::prepare_new_pool(MPoolOp *m)
   MonSession *session = m->get_session();
   if (!session)
     return -EPERM;
-  vector<string> properties;
+  string properties;
   stringstream ss;
+  ostringstream ruleset_name;
+  ruleset_name << m->crush_rule;
   if (m->auid)
-    return prepare_new_pool(m->name, m->auid, m->crush_rule, 0, 0,
+    return prepare_new_pool(m->name, m->auid, ruleset_name, 0, 0,
                             properties, pg_pool_t::TYPE_REPLICATED, ss);
   else
-    return prepare_new_pool(m->name, session->auid, m->crush_rule, 0, 0,
+    return prepare_new_pool(m->name, session->auid, ruleset_name, 0, 0,
                             properties, pg_pool_t::TYPE_REPLICATED, ss);
 }
 
-int OSDMonitor::get_erasure_code(const map<string,string> &properties,
+int OSDMonitor::get_erasure_code(const string &properties,
 				 ErasureCodeInterfaceRef *erasure_code,
 				 stringstream &ss)
 {
+  if (pending_inc.has_properties(properties))
+    return -EAGAIN;
+  const map<string,string> &properties_map = osdmap.get_properties(properties);
   map<string,string>::const_iterator plugin =
     properties.find("erasure-code-plugin");
   if (plugin == properties.end()) {
@@ -2825,20 +2830,17 @@ int OSDMonitor::check_cluster_features(uint64_t features,
   }
 }
 
-int OSDMonitor::prepare_pool_properties(const unsigned pool_type,
-					const vector<string> &properties,
-					map<string,string> *properties_map,
-					stringstream &ss)
+int OSDMonitor::prepare_properties_map(const vector<string> &properties,
+				       map<string,string> *properties_map,
+				       stringstream &ss)
 {
-  if (pool_type == pg_pool_t::TYPE_ERASURE) {
-    int r = get_str_map(g_conf->osd_pool_default_erasure_code_properties,
-			ss,
-			properties_map);
-    if (r)
-      return r;
-    (*properties_map)["erasure-code-directory"] =
-      g_conf->osd_pool_default_erasure_code_directory;
-  }
+  int r = get_str_map(g_conf->osd_pool_default_erasure_code_properties,
+		      ss,
+		      properties_map);
+  if (r)
+    return r;
+  (*properties_map)["erasure-code-directory"] =
+    g_conf->osd_pool_default_erasure_code_directory;
 
   for (vector<string>::const_iterator i = properties.begin();
        i != properties.end();
@@ -2858,7 +2860,7 @@ int OSDMonitor::prepare_pool_properties(const unsigned pool_type,
 }
 
 int OSDMonitor::prepare_pool_size(const unsigned pool_type,
-				  const map<string,string> &properties,
+				  const string &properties,
 				  unsigned *size,
 				  stringstream &ss)
 {
@@ -2884,7 +2886,7 @@ int OSDMonitor::prepare_pool_size(const unsigned pool_type,
 }
 
 int OSDMonitor::prepare_pool_stripe_width(const unsigned pool_type,
-					  const map<string,string> &properties,
+					  const string &properties,
 					  uint32_t *stripe_width,
 					  stringstream &ss)
 {
@@ -2913,11 +2915,12 @@ int OSDMonitor::prepare_pool_stripe_width(const unsigned pool_type,
 }
 
 int OSDMonitor::prepare_pool_crush_ruleset(const unsigned pool_type,
-					   const map<string,string> &properties,
+					   const string &ruleset_name,
 					   int *crush_ruleset,
 					   stringstream &ss)
 {
-  if (*crush_ruleset < 0) {
+  *crush_ruleset = convert_to_int(ruleset_name);
+  if (*crush_ruleset < 0 || !osdmap.crush->rule_exists(*crush_ruleset)) {
     switch (pool_type) {
     case pg_pool_t::TYPE_REPLICATED:
       *crush_ruleset =
@@ -2925,15 +2928,7 @@ int OSDMonitor::prepare_pool_crush_ruleset(const unsigned pool_type,
       break;
     case pg_pool_t::TYPE_ERASURE:
       {
-	map<string,string>::const_iterator ruleset =
-	  properties.find("crush_ruleset");
-	if (ruleset == properties.end()) {
-	  ss << "prepare_pool_crush_ruleset: crush_ruleset is missing from "
-	     << properties;
-	  return -EINVAL;
-	}
-
-	*crush_ruleset = osdmap.crush->get_rule_id(ruleset->second);
+	*crush_ruleset = osdmap.crush->get_rule_id(ruleset_name);
 	if (*crush_ruleset < 0) {
 	  CrushWrapper newcrush;
 	  _get_pending_crush(newcrush);
@@ -2967,31 +2962,29 @@ int OSDMonitor::prepare_pool_crush_ruleset(const unsigned pool_type,
  * @param crush_rule The crush rule to use. If <0, will use the system default
  * @param pg_num The pg_num to use. If set to 0, will use the system default
  * @param pgp_num The pgp_num to use. If set to 0, will use the system default
- * @param properties An opaque list of key[=value] pairs for pool configuration
+ * @param properties The name of a property map to be used for erasure code
  * @param pool_type TYPE_ERASURE, TYPE_REP or TYPE_RAID4
  * @param ss human readable error message, if any.
  *
  * @return 0 on success, negative errno on failure.
  */
-int OSDMonitor::prepare_new_pool(string& name, uint64_t auid, int crush_ruleset,
+int OSDMonitor::prepare_new_pool(string& name, uint64_t auid,
+				 const string &ruleset_name,
                                  unsigned pg_num, unsigned pgp_num,
-				 const vector<string> &properties,
+				 const string &properties,
                                  const unsigned pool_type,
 				 stringstream &ss)
 {
-  map<string,string> properties_map;
-  int r = prepare_pool_properties(pool_type, properties, &properties_map, ss);
-  if (r)
-    return r;
-  r = prepare_pool_crush_ruleset(pool_type, properties_map, &crush_ruleset, ss);
+  int crush_ruleset;
+  r = prepare_pool_crush_ruleset(pool_type, ruleset_name, &crush_ruleset, ss);
   if (r)
     return r;
   unsigned size;
-  r = prepare_pool_size(pool_type, properties_map, &size, ss);
+  r = prepare_pool_size(pool_type, properties, &size, ss);
   if (r)
     return r;
   uint32_t stripe_width = 0;
-  r = prepare_pool_stripe_width(pool_type, properties_map, &stripe_width, ss);
+  r = prepare_pool_stripe_width(pool_type, properties, &stripe_width, ss);
   if (r)
     return r;
 
@@ -3801,13 +3794,34 @@ bool OSDMonitor::prepare_command_impl(MMonCommand *m,
 					      get_last_committed() + 1));
     return true;
 
+  } else if (prefix == "osd set properties") {
+    string name;
+    cmd_getval(g_ceph_context, cmdmap, "name", name);
+    vector<string> properties;
+    cmd_getval(g_ceph_context, cmdmap, "properties", properties);
+    map<string,string> properties_map;
+    err = prepare_properties_map(properties, &properties_map, ss);
+    if (err)
+      goto reply;
+    if (pending_inc.has_properties(properties)) {
+      wait_for_finished_proposal(new C_RetryMessage(this, m));
+      return true;
+    } else {
+      pending_inc.set_properties(name, properties_map);
+    }
+
+    getline(ss, rs);
+    wait_for_finished_proposal(new Monitor::C_Command(mon, m, 0, rs,
+                                                      get_last_committed() + 1));
+    return true;
+
   } else if (prefix == "osd crush rule create-erasure") {
     err = check_cluster_features(CEPH_FEATURE_CRUSH_V2, ss);
     if (err)
       goto reply;
     string name, poolstr;
     cmd_getval(g_ceph_context, cmdmap, "name", name);
-    vector<string> properties;
+    string properties;
     cmd_getval(g_ceph_context, cmdmap, "properties", properties);
 
     if (osdmap.crush->rule_exists(name)) {
@@ -3815,12 +3829,6 @@ bool OSDMonitor::prepare_command_impl(MMonCommand *m,
       err = 0;
       goto reply;
     }
-
-    map<string,string> properties_map;
-    err = prepare_pool_properties(pg_pool_t::TYPE_ERASURE,
-				  properties, &properties_map, ss);
-    if (err)
-      goto reply;
 
     CrushWrapper newcrush;
     _get_pending_crush(newcrush);
@@ -3830,11 +3838,15 @@ bool OSDMonitor::prepare_command_impl(MMonCommand *m,
       err = 0;
     } else {
       ErasureCodeInterfaceRef erasure_code;
-      err = get_erasure_code(properties_map, &erasure_code, ss);
-      if (err) {
-	ss << "failed to load plugin using properties " << properties_map;
+      err = get_erasure_code(properties, &erasure_code, ss);
+      if (err == -EAGAIN) {
+	err = 0;
+	wait_for_finished_proposal(new C_RetryMessage(this, m));
+	return true;
+      } else if (err) {
+	ss << "failed to load plugin using properties " << properties;
 	goto reply;
-      }
+      } 
 
       int rule = erasure_code->create_ruleset(name, newcrush, &ss);
       erasure_code.reset();
@@ -4336,7 +4348,7 @@ done:
       goto reply;
     }
 
-    vector<string> properties;
+    string properties;
     cmd_getval(g_ceph_context, cmdmap, "properties", properties);
 
     int pool_type;
@@ -4356,7 +4368,7 @@ done:
     }
 
     err = prepare_new_pool(poolstr, 0, // auid=0 for admin created pool
-			   -1,         // default crush rule
+			   "-1",         // default crush rule
 			   pg_num, pgp_num,
 			   properties, pool_type,
 			   ss);

@@ -265,6 +265,7 @@ void PGBackend::trim_stashed_object(
 
 PGBackend *PGBackend::build_pg_backend(
   const pg_pool_t &pool,
+  OSDMapRef curmap,
   Listener *l,
   coll_t coll,
   coll_t temp_coll,
@@ -277,10 +278,11 @@ PGBackend *PGBackend::build_pg_backend(
   }
   case pg_pool_t::TYPE_ERASURE: {
     ErasureCodeInterfaceRef ec_impl;
-    assert(pool.properties.count("erasure-code-plugin"));
+    const map<string,string> &properties = curmap.get_properties(pool.properties);
+    assert(properties.count("erasure-code-plugin"));
     ceph::ErasureCodePluginRegistry::instance().factory(
-      pool.properties.find("erasure-code-plugin")->second,
-      pool.properties,
+      properties.find("erasure-code-plugin")->second,
+      properties,
       &ec_impl);
     assert(ec_impl);
     return new ECBackend(

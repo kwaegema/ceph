@@ -128,6 +128,7 @@ public:
     int32_t new_max_osd;
     map<int64_t,pg_pool_t> new_pools;
     map<int64_t,string> new_pool_names;
+    map<string,map<string,string> > new_properties;
     set<int64_t> old_pools;
     map<int32_t,entity_addr_t> new_up_client;
     map<int32_t,entity_addr_t> new_up_cluster;
@@ -179,6 +180,10 @@ public:
 	new_pools[pool] = *orig;
       return &new_pools[pool];
     }
+    bool has_properties(const string &name) const {
+      map<string,map<string,string> >::const_iterator i = new_properties.find(name);
+      return i != new_properties.end();
+    }
 
     /// propage update pools' snap metadata to any of their tiers
     int propagate_snaps_to_tiers(CephContext *cct, const OSDMap &base);
@@ -213,6 +218,7 @@ private:
 
   map<int64_t,pg_pool_t> pools;
   map<int64_t,string> pool_name;
+  map<string,map<string,string> > properties;
   map<string,int64_t> name_pool;
 
   ceph::shared_ptr< vector<uuid_d> > osd_uuid;
@@ -358,6 +364,26 @@ public:
   }
   float get_primary_affinityf(int o) const {
     return (float)get_primary_affinity(o) / (float)CEPH_OSD_MAX_PRIMARY_AFFINITY;
+  }
+
+  bool has_properties(const string &name) const {
+    map<string,map<string,string> >::const_iterator i = properties.find(name);
+    return i != properties.end();
+  }
+  void set_properties(const string &name,
+		      const map<string,string> &properties_map) {
+    properties[name] = properties_map;
+  }
+  const map<string,string> &get_properties(const string &name) const {
+    map<string,map<string,string> >::const_iterator i = properties.find(name);
+    static map<string,string> empty;
+    if (i == properties.end())
+      return empty;
+    else
+      return i->second;
+  }
+  map<string,string> &get_properties(const string &name) {
+    return properties[name];
   }
 
   bool exists(int osd) const {
